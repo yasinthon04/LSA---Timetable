@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Teacher {
+  id        String     @id @default(uuid())
+  name      String
+  email     String     @unique
+  color     String     @default("#6366f1")
+  createdAt DateTime   @default(now())
+  schedules Schedule[]
+}
+
+model Subject {
+  id           String        @id @default(uuid())
+  name         String
+  color        String        @default("#60a5fa")
+  type         String        @default("MAIN") // MAIN, INTERVENTION, BOOSTER
+  createdAt    DateTime      @default(now())
+  schedules    Schedule[]
+  yearSubjects YearSubject[]
+}
+
+model YearGroup {
+  id           String        @id @default(uuid())
+  name         String        @unique
+  createdAt    DateTime      @default(now())
+  schedules    Schedule[]
+  yearSubjects YearSubject[]
+}
+
+model YearSubject {
+  id          String    @id @default(uuid())
+  yearGroupId String
+  subjectId   String
+  yearGroup   YearGroup @relation(fields: [yearGroupId], references: [id], onDelete: Cascade)
+  subject     Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([yearGroupId, subjectId])
+}
+
+model Schedule {
+  id          String    @id @default(uuid())
+  teacherId   String
+  subjectId   String
+  yearGroupId String
+  dayOfWeek   Int       // 0=Monday, 1=Tuesday, ..., 4=Friday
+  startTime   String    // "HH:mm" format
+  endTime     String    // "HH:mm" format
+  createdAt   DateTime  @default(now())
+  teacher     Teacher   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  subject     Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  yearGroup   YearGroup @relation(fields: [yearGroupId], references: [id], onDelete: Cascade)
+}
