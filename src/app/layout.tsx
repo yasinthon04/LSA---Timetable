@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "School Timetable - Schedule Management",
+  title: "LSA - Timetable",
   description: "Manage school timetables, teachers, subjects, and schedules with a beautiful calendar interface",
 };
 

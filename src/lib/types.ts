@@ -11,7 +11,7 @@ export interface Subject {
     id: string;
     name: string;
     color: string;
-    type: 'MAIN' | 'INTERVENTION' | 'BOOSTER';
+    type: string;
     createdAt: string;
     yearSubjects?: YearSubject[];
 }
@@ -32,6 +32,19 @@ export interface YearSubject {
     subject?: Subject;
 }
 
+export interface Student {
+    id: string;
+    name: string;
+    createdAt: string;
+}
+
+export interface StudentSchedule {
+    id: string;
+    studentId: string;
+    scheduleId: string;
+    student?: Student;
+}
+
 export interface Schedule {
     id: string;
     teacherId: string;
@@ -44,6 +57,7 @@ export interface Schedule {
     teacher?: Teacher;
     subject?: Subject;
     yearGroup?: YearGroup;
+    studentSchedules?: StudentSchedule[];
 }
 
 export interface ScheduleFormData {
@@ -53,6 +67,7 @@ export interface ScheduleFormData {
     dayOfWeek: number;
     startTime: string;
     endTime: string;
+    studentIds?: string[];
 }
 
 export const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] as const;

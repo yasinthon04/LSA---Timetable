@@ -2,12 +2,11 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Schedule, Teacher, Subject, YearGroup,
+  Schedule, Teacher, Subject, YearGroup, Student,
   ScheduleFormData, DAY_NAMES, SCHOOL_START, SCHOOL_END,
   LUNCH_BREAK_1_START, LUNCH_BREAK_1_END, LUNCH_BREAK_2_START, LUNCH_BREAK_2_END,
   SUBJECT_COLORS, TEACHER_COLORS, DAY_FULL_NAMES,
 } from '@/lib/types';
-
 // ===== HELPERS =====
 function timeToMinutes(time: string): number {
   const [h, m] = time.split(':').map(Number);
@@ -32,54 +31,31 @@ function calculateTeacherHours(schedules: Schedule[], teacherId: string): string
   return `${hours}h ${mins}m`;
 }
 
-const GRID_START = timeToMinutes(SCHOOL_START);
-const GRID_END = timeToMinutes('16:30'); // extend grid for flexibility
-const HOUR_HEIGHT = 60; // px per hour
-const TIME_SLOTS: string[] = [];
-for (let m = GRID_START; m <= GRID_END; m += 60) {
-  TIME_SLOTS.push(minutesToTime(m));
-}
+// ===== CONFIG =====
+const TIME_PERIODS = [
+  { id: 'hr', label: '07:30 - 07:45', start: '07:30', end: '07:45' },
+  { id: 'p1', label: '08:00 - 09:00', start: '08:00', end: '09:00', display: '1' },
+  { id: 'p2', label: '09:00 - 10:00', start: '09:00', end: '10:00', display: '2' },
+  { id: 'b1', label: '10:00 - 10:20', start: '10:00', end: '10:20', isBreak: true },
+  { id: 'p3', label: '10:20 - 11:20', start: '10:20', end: '11:20', display: '3' },
+  { id: 'p4', label: '11:20 - 12:20', start: '11:20', end: '12:20', display: '4' },
+  { id: 'p5', label: '12:20 - 13:10', start: '12:20', end: '13:10', display: '5' },
+  { id: 'b2', label: '13:10 - 13:15', start: '13:10', end: '13:15', isBreak: true },
+  { id: 'p6', label: '13:15 - 14:15', start: '13:15', end: '14:15', display: '6' },
+  { id: 'end', label: '14:15 - 14:30', start: '14:15', end: '14:30', isBreak: true },
+];
 
-function getBlockStyle(startTime: string, endTime: string) {
-  const startMin = timeToMinutes(startTime) - GRID_START;
-  const endMin = timeToMinutes(endTime) - GRID_START;
-  const top = (startMin / 60) * HOUR_HEIGHT;
-  const height = ((endMin - startMin) / 60) * HOUR_HEIGHT;
-  return { top: `${top}px`, height: `${height}px` };
-}
-
-function getWeekDates(date: Date): Date[] {
-  const day = date.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  const monday = new Date(date);
-  monday.setDate(date.getDate() + diff);
-  return Array.from({ length: 5 }, (_, i) => {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    return d;
-  });
-}
-
-function formatDateRange(dates: Date[]): string {
-  if (dates.length === 0) return '';
-  const first = dates[0];
-  const last = dates[dates.length - 1];
-  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  if (first.getMonth() === last.getMonth()) {
-    return `${first.getDate()} - ${last.getDate()} ${months[first.getMonth()]}`;
-  }
-  return `${first.getDate()} ${months[first.getMonth()].slice(0, 3)} - ${last.getDate()} ${months[last.getMonth()].slice(0, 3)}`;
-}
-
-function isToday(date: Date): boolean {
-  const today = new Date();
-  return date.getDate() === today.getDate() &&
-    date.getMonth() === today.getMonth() &&
-    date.getFullYear() === today.getFullYear();
+function isScheduleInPeriod(schedule: Schedule, periodStart: string, periodEnd: string): boolean {
+  const sStart = timeToMinutes(schedule.startTime);
+  const sEnd = timeToMinutes(schedule.endTime);
+  const pStart = timeToMinutes(periodStart);
+  const pEnd = timeToMinutes(periodEnd);
+  // Check overlap: max(start1, start2) < min(end1, end2)
+  return Math.max(sStart, pStart) < Math.min(sEnd, pEnd);
 }
 
 // ===== MAIN APP =====
-type ActivePage = 'calendar' | 'teachers' | 'subjects';
+type ActivePage = 'calendar' | 'teachers' | 'subjects' | 'students';
 
 export default function Home() {
   const [activePage, setActivePage] = useState<ActivePage>('calendar');
@@ -87,9 +63,13 @@ export default function Home() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [yearGroups, setYearGroups] = useState<YearGroup[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
   const [selectedYearGroup, setSelectedYearGroup] = useState<string>('');
   const [selectedTeacherIds, setSelectedTeacherIds] = useState<Set<string>>(new Set());
-  const [currentWeek, setCurrentWeek] = useState(new Date());
+  const [teacherFilter, setTeacherFilter] = useState(''); // Teacher search
+  const [selectedSubjectIds, setSelectedSubjectIds] = useState<Set<string>>(new Set());
+  const [subjectFilter, setSubjectFilter] = useState(''); // Text search (keep existing)
+  const [mounted, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [modalState, setModalState] = useState<{
     open: boolean;
@@ -97,19 +77,36 @@ export default function Home() {
     schedule?: Schedule;
     prefill?: Partial<ScheduleFormData>;
   }>({ open: false, mode: 'create' });
+
   const [teacherModal, setTeacherModal] = useState<{
     open: boolean;
     mode: 'create' | 'edit';
     teacher?: Teacher;
   }>({ open: false, mode: 'create' });
+
   const [subjectModal, setSubjectModal] = useState<{
     open: boolean;
     mode: 'create' | 'edit';
     subject?: Subject;
   }>({ open: false, mode: 'create' });
+
+  const [confirmationModal, setConfirmationModal] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({ open: false, title: '', message: '', onConfirm: () => { } });
+
+  const confirmDelete = (title: string, message: string, onConfirm: () => void) => {
+    setConfirmationModal({ open: true, title, message, onConfirm });
+  };
+
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  const weekDates = useMemo(() => getWeekDates(currentWeek), [currentWeek]);
+  // Set mounted flag
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Show toast
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
@@ -120,38 +117,38 @@ export default function Home() {
   // Fetch all data
   const fetchData = useCallback(async () => {
     try {
-      const [teachersRes, subjectsRes, yearGroupsRes] = await Promise.all([
+      const [teachersRes, subjectsRes, yearGroupsRes, studentsRes] = await Promise.all([
         fetch('/api/teachers'),
         fetch('/api/subjects'),
         fetch('/api/year-groups'),
+        fetch('/api/students'),
       ]);
-      const [t, s, y] = await Promise.all([
+      const [t, s, y, st] = await Promise.all([
         teachersRes.json(),
         subjectsRes.json(),
         yearGroupsRes.json(),
+        studentsRes.json(),
       ]);
-      setTeachers(t);
-      setSubjects(s);
-      setYearGroups(y);
-      if (y.length > 0 && !selectedYearGroup) {
-        setSelectedYearGroup(y[0].id);
-      }
+      // Ensure all responses are arrays before setting state
+      setTeachers(Array.isArray(t) ? t : []);
+      setSubjects(Array.isArray(s) ? s : []);
+      setYearGroups(Array.isArray(y) ? y : []);
+      setStudents(Array.isArray(st) ? st : []);
+      // Removed auto-select first year group to support "All Years" default
     } catch {
       showToast('Failed to load data', 'error');
     }
-  }, [selectedYearGroup, showToast]);
+  }, [showToast]);
 
   const fetchSchedules = useCallback(async () => {
     try {
-      const params = new URLSearchParams();
-      if (selectedYearGroup) params.set('yearGroupId', selectedYearGroup);
-      const res = await fetch(`/api/schedules?${params}`);
+      const res = await fetch('/api/schedules');
       const data = await res.json();
       setSchedules(data);
     } catch {
       showToast('Failed to load schedules', 'error');
     }
-  }, [selectedYearGroup, showToast]);
+  }, [showToast]);
 
   useEffect(() => {
     fetchData().then(() => setLoading(false));
@@ -161,11 +158,10 @@ export default function Home() {
     if (selectedYearGroup) fetchSchedules();
   }, [selectedYearGroup, fetchSchedules]);
 
-  // Filter schedules by selected teachers
-  const filteredSchedules = useMemo(() => {
-    if (selectedTeacherIds.size === 0) return schedules;
-    return schedules.filter(s => selectedTeacherIds.has(s.teacherId));
-  }, [schedules, selectedTeacherIds]);
+  // No filteredSchedules state needed for rendering anymore
+  // We filter inside the render to show all but dim unselected
+  const allSchedules = useMemo(() => schedules, [schedules]);
+
 
   // Schedule CRUD
   const handleSaveSchedule = async (data: ScheduleFormData, id?: string) => {
@@ -183,6 +179,113 @@ export default function Home() {
       showToast(id ? 'Schedule updated' : 'Schedule created');
     } catch {
       showToast('Failed to save schedule', 'error');
+    }
+  };
+
+  // Drag & Drop Handlers
+  const handleDragStart = (e: React.DragEvent, type: 'create' | 'move', data: { subjectId?: string; scheduleId?: string }) => {
+    e.dataTransfer.setData('application/json', JSON.stringify({ type, data }));
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetTeacherId: string, targetDay: number, period: typeof TIME_PERIODS[0]) => {
+    e.preventDefault();
+    const raw = e.dataTransfer.getData('application/json');
+    if (!raw) return;
+
+    const { type, data } = JSON.parse(raw);
+    const targetYearGroupId = selectedYearGroup || (yearGroups.length > 0 ? yearGroups[0].id : ''); // Default year group
+
+    if (!targetYearGroupId) {
+      showToast('Please select a Year Group first', 'error');
+      return;
+    }
+
+    // Check if target slot is occupied
+    const targetSchedule = schedules.find(s =>
+      s.teacherId === targetTeacherId &&
+      s.dayOfWeek === targetDay &&
+      (!selectedYearGroup || s.yearGroupId === selectedYearGroup) &&
+      isScheduleInPeriod(s, period.start, period.end)
+    );
+
+    try {
+      if (type === 'create') {
+        const subjectId = data.subjectId;
+        // Logic: If occupied, Replace (Delete old, Create new). If empty, Create new.
+        if (targetSchedule) {
+          await fetch(`/api/schedules/${targetSchedule.id}`, { method: 'DELETE' });
+        }
+
+        await handleSaveSchedule({
+          teacherId: targetTeacherId,
+          subjectId,
+          yearGroupId: targetYearGroupId,
+          dayOfWeek: targetDay,
+          startTime: period.start,
+          endTime: period.end
+        });
+
+      } else if (type === 'move') {
+        const sourceScheduleId = data.scheduleId;
+        const sourceSchedule = schedules.find(s => s.id === sourceScheduleId);
+        if (!sourceSchedule) return;
+
+        // Verify we aren't dropping on self
+        if (targetSchedule && targetSchedule.id === sourceSchedule.id) return;
+
+        if (targetSchedule) {
+          // SWAP Logic
+          // Store Source Coords
+          const sourceCoords = {
+            teacherId: sourceSchedule.teacherId,
+            dayOfWeek: sourceSchedule.dayOfWeek,
+            startTime: sourceSchedule.startTime,
+            endTime: sourceSchedule.endTime
+          };
+
+          // Update Source to Target Coords
+          await handleSaveSchedule({
+            ...sourceSchedule,
+            teacherId: targetTeacherId,
+            dayOfWeek: targetDay,
+            startTime: period.start,
+            endTime: period.end,
+            subjectId: sourceSchedule.subjectId,
+            yearGroupId: sourceSchedule.yearGroupId
+          }, sourceSchedule.id);
+
+          // Update Target to Source Coords
+          await handleSaveSchedule({
+            ...targetSchedule,
+            ...sourceCoords,
+            subjectId: targetSchedule.subjectId,
+            yearGroupId: targetSchedule.yearGroupId
+          }, targetSchedule.id);
+
+          showToast('Schedules switched');
+
+        } else {
+          // MOVE Logic (Target Empty)
+          await handleSaveSchedule({
+            ...sourceSchedule,
+            teacherId: targetTeacherId,
+            dayOfWeek: targetDay,
+            startTime: period.start,
+            endTime: period.end,
+            subjectId: sourceSchedule.subjectId,
+            yearGroupId: sourceSchedule.yearGroupId
+          }, sourceSchedule.id);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Action failed', 'error');
     }
   };
 
@@ -263,6 +366,33 @@ export default function Home() {
     }
   };
 
+  const handleAddStudent = async (name: string) => {
+    try {
+      const res = await fetch('/api/students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error();
+      const newStudent = await res.json();
+      setStudents(prev => [...prev, newStudent].sort((a, b) => a.name.localeCompare(b.name)));
+      showToast('Student added');
+    } catch {
+      showToast('Failed to add student', 'error');
+    }
+  };
+
+  const handleDeleteStudent = async (id: string) => {
+    try {
+      const res = await fetch(`/api/students/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      setStudents(prev => prev.filter(s => s.id !== id));
+      showToast('Student deleted');
+    } catch {
+      showToast('Failed to delete student', 'error');
+    }
+  };
+
   // Teacher toggle
   const toggleTeacher = (id: string) => {
     setSelectedTeacherIds(prev => {
@@ -272,23 +402,9 @@ export default function Home() {
     });
   };
 
-  // Week navigation
-  const prevWeek = () => {
-    setCurrentWeek(prev => {
-      const d = new Date(prev);
-      d.setDate(d.getDate() - 7);
-      return d;
-    });
-  };
-  const nextWeek = () => {
-    setCurrentWeek(prev => {
-      const d = new Date(prev);
-      d.setDate(d.getDate() + 7);
-      return d;
-    });
-  };
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
-  if (loading) {
+  if (loading || !mounted) {
     return (
       <div className="app-layout">
         <div className="loading-spinner" style={{ width: '100%', height: '100vh' }}>
@@ -301,45 +417,147 @@ export default function Home() {
   return (
     <div className="app-layout">
       {/* SIDEBAR */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
           <div className="sidebar-logo">ST</div>
-          <span className="sidebar-title">Timetable</span>
+          {!isSidebarCollapsed && <span className="sidebar-title">Timetable</span>}
+          <button
+            className="sidebar-toggle-btn"
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          >
+            {isSidebarCollapsed ? '»' : '«'}
+          </button>
         </div>
 
-        {/* Subject Legend */}
-        <div className="sidebar-section">
-          <div className="sidebar-section-title">Subjects</div>
-          {subjects.filter(s => s.type === 'MAIN').map(subject => (
-            <div key={subject.id} className="sidebar-item">
-              <div className="sidebar-dot" style={{ backgroundColor: subject.color }}></div>
-              <span className="sidebar-item-text">{subject.name}</span>
+        <div className="sidebar-content">
+          {/* Subject Legend */}
+          <div className="sidebar-section">
+            <div className="sidebar-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: isSidebarCollapsed ? 0 : 'auto', overflow: 'hidden' }}>
+              {!isSidebarCollapsed && <span>Subjects</span>}
+              {!isSidebarCollapsed && (
+                <button
+                  className="btn-text"
+                  style={{ fontSize: 11, padding: '2px 6px', color: 'var(--text-muted)', cursor: 'pointer', background: 'transparent', border: 'none' }}
+                  onClick={() => setSelectedSubjectIds(new Set())}
+                >Clear</button>
+              )}
             </div>
-          ))}
-          {subjects.filter(s => s.type !== 'MAIN').map(subject => (
-            <div key={subject.id} className="sidebar-item">
-              <div className="sidebar-dot" style={{ backgroundColor: subject.color, border: '2px dashed rgba(255,255,255,0.3)' }}></div>
-              <span className="sidebar-item-text">{subject.name}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Teacher Filter */}
-        <div className="sidebar-section">
-          <div className="sidebar-section-title">Teachers</div>
-          {teachers.map(teacher => (
-            <div key={teacher.id} className="sidebar-item" onClick={() => toggleTeacher(teacher.id)}>
+            {!isSidebarCollapsed && (
               <input
-                type="checkbox"
-                className="teacher-filter-checkbox"
-                checked={selectedTeacherIds.size === 0 || selectedTeacherIds.has(teacher.id)}
-                onChange={() => toggleTeacher(teacher.id)}
-                style={{ borderColor: teacher.color }}
+                type="text"
+                placeholder="Search subjects..."
+                className="form-input"
+                style={{ marginBottom: 12, fontSize: 13, padding: '6px 8px' }}
+                value={subjectFilter}
+                onChange={(e) => setSubjectFilter(e.target.value)}
               />
-              <span className="sidebar-item-text">{teacher.name}</span>
-              <span className="sidebar-item-hours">{calculateTeacherHours(schedules, teacher.id)}</span>
+            )}
+            {subjects
+              .filter(s => s.name.toLowerCase().includes(subjectFilter.toLowerCase()))
+              .filter(s => s.type === 'MAIN').map(subject => (
+                <div
+                  key={subject.id}
+                  className={`sidebar-item ${selectedSubjectIds.has(subject.id) ? 'active' : ''}`}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, 'create', { subjectId: subject.id })}
+                  onClick={() => {
+                    setSelectedSubjectIds(prev => {
+                      const next = new Set(prev);
+                      if (next.has(subject.id)) next.delete(subject.id); else next.add(subject.id);
+                      return next;
+                    });
+                  }}
+                  style={{
+                    cursor: 'pointer',
+                    opacity: selectedSubjectIds.size > 0 && !selectedSubjectIds.has(subject.id) ? 0.5 : 1,
+                    border: selectedSubjectIds.has(subject.id) ? `1px solid ${subject.color}` : '1px solid transparent',
+                    justifyContent: isSidebarCollapsed ? 'center' : 'flex-start'
+                  }}
+                  title={subject.name}
+                >
+                  <div className="sidebar-dot" style={{ backgroundColor: subject.color }}></div>
+                  {!isSidebarCollapsed && <span className="sidebar-item-text">{subject.name}</span>}
+                </div>
+              ))}
+            {subjects
+              .filter(s => s.name.toLowerCase().includes(subjectFilter.toLowerCase()))
+              .filter(s => s.type !== 'MAIN').map(subject => (
+                <div
+                  key={subject.id}
+                  className={`sidebar-item ${selectedSubjectIds.has(subject.id) ? 'active' : ''}`}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, 'create', { subjectId: subject.id })}
+                  onClick={() => {
+                    setSelectedSubjectIds(prev => {
+                      const next = new Set(prev);
+                      if (next.has(subject.id)) next.delete(subject.id); else next.add(subject.id);
+                      return next;
+                    });
+                  }}
+                  style={{
+                    cursor: 'pointer',
+                    opacity: selectedSubjectIds.size > 0 && !selectedSubjectIds.has(subject.id) ? 0.5 : 1,
+                    border: selectedSubjectIds.has(subject.id) ? `1px solid ${subject.color}` : '1px solid transparent',
+                    justifyContent: isSidebarCollapsed ? 'center' : 'flex-start'
+                  }}
+                  title={subject.name}
+                >
+                  <div className="sidebar-dot" style={{ backgroundColor: subject.color, border: '2px dashed rgba(255,255,255,0.3)' }}></div>
+                  {!isSidebarCollapsed && <span className="sidebar-item-text">{subject.name}</span>}
+                </div>
+              ))}
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border-primary)', margin: '8px 16px' }}></div>
+
+          {/* Teacher Filter */}
+          <div className="sidebar-section">
+            <div className="sidebar-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isSidebarCollapsed ? 0 : 12, height: isSidebarCollapsed ? 0 : 'auto', overflow: 'hidden' }}>
+              {!isSidebarCollapsed && <span>Teachers</span>}
+              {!isSidebarCollapsed && (
+                <button
+                  className="btn-text"
+                  style={{ fontSize: 11, padding: '2px 6px', color: 'var(--text-muted)', cursor: 'pointer', background: 'transparent', border: 'none' }}
+                  onClick={() => setSelectedTeacherIds(new Set())}
+                >Clear</button>
+              )}
             </div>
-          ))}
+            {!isSidebarCollapsed && (
+              <input
+                type="text"
+                placeholder="Search teachers..."
+                className="form-input"
+                style={{ marginBottom: 12, fontSize: 13, padding: '6px 8px' }}
+                value={teacherFilter}
+                onChange={(e) => setTeacherFilter(e.target.value)}
+              />
+            )}
+            {teachers
+              .filter(t => t.name.toLowerCase().includes(teacherFilter.toLowerCase()))
+              .map(teacher => (
+                <div
+                  key={teacher.id}
+                  className={`sidebar-item ${selectedTeacherIds.has(teacher.id) ? 'active' : ''}`}
+                  onClick={() => toggleTeacher(teacher.id)}
+                  style={{
+                    cursor: 'pointer',
+                    opacity: selectedTeacherIds.size > 0 && !selectedTeacherIds.has(teacher.id) ? 0.5 : 1,
+                    border: selectedTeacherIds.has(teacher.id) ? `1px solid ${teacher.color}` : '1px solid transparent',
+                    justifyContent: isSidebarCollapsed ? 'center' : 'flex-start'
+                  }}
+                  title={teacher.name}
+                >
+                  {/* Optional checkbox can be removed or kept as visual indicator */}
+                  <div className="sidebar-dot" style={{ backgroundColor: teacher.color, width: 10, height: 10, borderRadius: '50%', flexShrink: 0 }}></div>
+                  {!isSidebarCollapsed && (
+                    <>
+                      <span className="sidebar-item-text">{teacher.name}</span>
+                      <span className="sidebar-item-hours">{calculateTeacherHours(schedules, teacher.id)}</span>
+                    </>
+                  )}
+                </div>
+              ))}
+          </div>
         </div>
       </aside>
 
@@ -351,123 +569,188 @@ export default function Home() {
             <a className={`topnav-link ${activePage === 'calendar' ? 'active' : ''}`} onClick={() => setActivePage('calendar')}>Calendar</a>
             <a className={`topnav-link ${activePage === 'teachers' ? 'active' : ''}`} onClick={() => setActivePage('teachers')}>Teachers</a>
             <a className={`topnav-link ${activePage === 'subjects' ? 'active' : ''}`} onClick={() => setActivePage('subjects')}>Subjects</a>
+            <a className={`topnav-link ${activePage === 'students' ? 'active' : ''}`} onClick={() => setActivePage('students')}>Students</a>
           </div>
           <div className="topnav-right">
-            <button className="topnav-icon">💬</button>
-            <button className="topnav-icon">🔔</button>
             <div className="topnav-avatar">A</div>
           </div>
         </nav>
 
         {/* CONTENT */}
         {activePage === 'calendar' && (
-          <div className="calendar-container">
-            {/* Year Group Selector */}
-            <div className="year-group-selector">
-              {yearGroups.map(yg => (
-                <button
-                  key={yg.id}
-                  className={`year-group-chip ${selectedYearGroup === yg.id ? 'active' : ''}`}
-                  onClick={() => setSelectedYearGroup(yg.id)}
-                >
-                  {yg.name}
-                </button>
-              ))}
+          <div className="timetable-container">
+            {/* Filter Header */}
+            {/* Filter Header */}
+            <div className="timetable-filters" style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '12px 24px',
+              borderBottom: '1px solid var(--border-primary)',
+              background: 'var(--bg-secondary)', // Distinct background
+              position: 'sticky', top: 0, zIndex: 10 // Sticky header
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Filter by Year:</span>
+              <select
+                className="form-select"
+                style={{ width: 'auto', padding: '6px 12px', fontSize: 13, borderColor: 'var(--border-primary)' }}
+                value={selectedYearGroup}
+                onChange={(e) => setSelectedYearGroup(e.target.value)}
+              >
+                <option value="">All Years</option>
+                {yearGroups.map(yg => (
+                  <option key={yg.id} value={yg.id}>{yg.name}</option>
+                ))}
+              </select>
             </div>
 
-            {/* Calendar Header */}
-            <div className="calendar-header">
-              <div className="calendar-nav">
-                <button className="calendar-nav-btn" onClick={prevWeek}>‹</button>
-                <span className="calendar-date-range">{formatDateRange(weekDates)}</span>
-                <button className="calendar-nav-btn" onClick={nextWeek}>›</button>
-              </div>
-              <button className="calendar-view-toggle">Week ▾</button>
-            </div>
-
-            {/* Calendar Grid */}
-            <div className="calendar-grid-wrapper">
-              <div className="calendar-grid">
-                {/* Header row */}
-                <div className="calendar-day-header"></div>
-                {weekDates.map((date, i) => (
-                  <div key={i} className={`calendar-day-header ${isToday(date) ? 'calendar-day-today' : ''}`}>
-                    <span className="calendar-day-number">{date.getDate()}</span>
-                    <span className="calendar-day-name">{DAY_NAMES[i]}</span>
+            {/* TEACHER MATRIX */}
+            <div className="timetable-matrix">
+              {/* Main Header (Periods) */}
+              <div className="matrix-header-row">
+                <div className="header-cell col-day">Day</div>
+                <div className="header-cell col-teacher">Teacher</div>
+                {TIME_PERIODS.map(p => (
+                  <div key={p.id} className={`header-cell col-period ${p.isBreak ? 'is-break' : ''} ${p.id === 'hr' ? 'is-hr' : ''}`}>
+                    <div className="header-period-top">
+                      <div className="header-time">
+                        {['b1', 'b2', 'end'].includes(p.id) ? (
+                          <>
+                            <span>{p.start}</span>
+                            <div style={{ width: '100%', height: 0 }}></div>
+                            <span>- {p.end}</span>
+                          </>
+                        ) : (
+                          <span>{p.start} - {p.end}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="header-period-bottom">
+                      {p.display || ''}
+                    </div>
                   </div>
                 ))}
+              </div>
 
-                {/* Time column */}
-                <div className="calendar-time-col">
-                  {TIME_SLOTS.map(time => (
-                    <div key={time} className="calendar-time-label">{time}</div>
-                  ))}
-                </div>
+              {/* Day Groups */}
+              {[0, 1, 2, 3, 4].map(dayIdx => {
+                // Use short name if filtering by subject OR teacher to prevent layout issues
+                const dayName = (selectedSubjectIds.size > 0 || selectedTeacherIds.size > 0) ? DAY_NAMES[dayIdx] : DAY_FULL_NAMES[dayIdx];
 
-                {/* Day columns */}
-                {[0, 1, 2, 3, 4].map(dayIndex => {
-                  const daySchedules = filteredSchedules.filter(s => s.dayOfWeek === dayIndex);
-                  const lunchStart1 = ((timeToMinutes(LUNCH_BREAK_1_START) - GRID_START) / 60) * HOUR_HEIGHT;
-                  const lunchHeight1 = ((timeToMinutes(LUNCH_BREAK_1_END) - timeToMinutes(LUNCH_BREAK_1_START)) / 60) * HOUR_HEIGHT;
-                  const lunchStart2 = ((timeToMinutes(LUNCH_BREAK_2_START) - GRID_START) / 60) * HOUR_HEIGHT;
-                  const lunchHeight2 = ((timeToMinutes(LUNCH_BREAK_2_END) - timeToMinutes(LUNCH_BREAK_2_START)) / 60) * HOUR_HEIGHT;
+                // Filter teachers:
+                // 1. Must be in selectedTeacherIds (if any selected)
+                // 2. If subjects selected, must handle whether to show teacher. 
+                //    Let's filter schedules first then decide if teacher shows.
 
-                  return (
-                    <div key={dayIndex} className="calendar-day-col">
-                      {/* Hour lines */}
-                      {TIME_SLOTS.map((time, i) => (
-                        <div
-                          key={time}
-                          className="calendar-hour-line"
-                          onClick={() => {
-                            const startMinutes = GRID_START + i * 60;
-                            setModalState({
-                              open: true,
-                              mode: 'create',
-                              prefill: {
-                                dayOfWeek: dayIndex,
-                                startTime: minutesToTime(startMinutes),
-                                endTime: minutesToTime(startMinutes + 60),
-                                yearGroupId: selectedYearGroup,
-                              },
-                            });
-                          }}
-                        />
-                      ))}
+                const currentTeachers = teachers
+                  .filter(t => selectedTeacherIds.size === 0 || selectedTeacherIds.has(t.id))
+                  .filter(t => {
+                    // If no subjects selected, show all (that match teacher filter)
+                    if (selectedSubjectIds.size === 0) return true;
 
-                      {/* Lunch zones */}
-                      <div className="lunch-zone" style={{ top: `${lunchStart1}px`, height: `${lunchHeight1}px` }} />
-                      <div className="lunch-zone" style={{ top: `${lunchStart2}px`, height: `${lunchHeight2}px` }} />
+                    // If subjects selected, does this teacher have ANY matching subject today?
+                    const hasMatchingSchedule = allSchedules.some(s =>
+                      s.teacherId === t.id &&
+                      s.dayOfWeek === dayIdx &&
+                      (!selectedYearGroup || s.yearGroupId === selectedYearGroup) &&
+                      selectedSubjectIds.has(s.subjectId)
+                    );
+                    return hasMatchingSchedule;
+                  })
+                  .sort((a, b) => a.name.localeCompare(b.name));
 
-                      {/* Schedule blocks */}
-                      {daySchedules.map(schedule => {
-                        const style = getBlockStyle(schedule.startTime, schedule.endTime);
-                        const bgColor = schedule.subject?.color || '#6366f1';
+                if (currentTeachers.length === 0) return null;
+
+                return (
+                  <div key={dayIdx} className="day-group">
+                    {/* Day Label Column */}
+                    <div className="day-label-col">
+                      <div className="day-name-vertical">{dayName}</div>
+                    </div>
+
+                    {/* Teachers Rows Container */}
+                    <div className="day-teachers-col">
+                      {currentTeachers.map(teacher => {
+                        // Get schedules for this teacher & day
+                        // Apply Subject Filter here too so we only see relevant blocks?
+                        const rowSchedules = allSchedules.filter(s =>
+                          s.teacherId === teacher.id &&
+                          s.dayOfWeek === dayIdx &&
+                          (!selectedYearGroup || s.yearGroupId === selectedYearGroup) &&
+                          (selectedSubjectIds.size === 0 || selectedSubjectIds.has(s.subjectId))
+                        );
+
                         return (
-                          <div
-                            key={schedule.id}
-                            className="schedule-block"
-                            style={{
-                              ...style,
-                              backgroundColor: `${bgColor}22`,
-                              borderLeftColor: bgColor,
-                              color: bgColor,
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setModalState({ open: true, mode: 'edit', schedule });
-                            }}
-                          >
-                            <div className="schedule-block-time">{schedule.startTime}</div>
-                            <div className="schedule-block-subject">{schedule.subject?.name}</div>
-                            <div className="schedule-block-teacher">{schedule.teacher?.name}</div>
+                          <div key={teacher.id} className="teacher-row">
+                            <div className="teacher-name-cell">
+                              <span className="teacher-dot" style={{ backgroundColor: teacher.color }}></span>
+                              {teacher.name}
+                            </div>
+
+                            {/* Period Cells */}
+                            {TIME_PERIODS.map(period => {
+                              const periodScheds = rowSchedules.filter(s => isScheduleInPeriod(s, period.start, period.end));
+                              const isBusy = periodScheds.length > 0;
+                              const sched = periodScheds[0];
+
+                              return (
+                                <div
+                                  key={period.id}
+                                  className={`period-cell ${isBusy ? 'busy' : ''} ${period.isBreak ? 'break' : ''} ${period.id === 'hr' ? 'is-hr' : ''}`}
+                                  style={isBusy ? { backgroundColor: sched.subject?.color } : {}}
+
+                                  // Drag Source (if busy)
+                                  draggable={isBusy}
+                                  onDragStart={(e) => {
+                                    if (isBusy) handleDragStart(e, 'move', { scheduleId: sched.id });
+                                  }}
+
+                                  // Drop Target
+                                  onDragOver={handleDragOver}
+                                  onDrop={(e) => handleDrop(e, teacher.id, dayIdx, period)}
+
+                                  onClick={() => {
+                                    if (isBusy) {
+                                      setModalState({ open: true, mode: 'edit', schedule: sched });
+                                    } else {
+                                      setModalState({
+                                        open: true, mode: 'create', prefill: {
+                                          teacherId: teacher.id,
+                                          dayOfWeek: dayIdx,
+                                          startTime: period.start,
+                                          endTime: period.end,
+                                          yearGroupId: selectedYearGroup || (yearGroups.length > 0 ? yearGroups[0].id : ''),
+                                        }
+                                      });
+                                    }
+                                  }}
+                                >
+                                  {isBusy && (
+                                    <div className="cell-content">
+                                      <div className="cell-subject">{sched.subject?.name}</div>
+                                      <div className="cell-time">{yearGroups.find(y => y.id === sched.yearGroupId)?.name || sched.yearGroupId}</div>
+                                      {sched.studentSchedules && sched.studentSchedules.length > 0 && (
+                                        <div className="cell-students">
+                                          {sched.studentSchedules.slice(0, 3).map(ss => (
+                                            <span key={ss.id} className="student-tag">{ss.student?.name}</span>
+                                          ))}
+                                          {sched.studentSchedules.length > 3 && (
+                                            <span className="student-tag-more">+{sched.studentSchedules.length - 3}</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         );
                       })}
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -477,7 +760,7 @@ export default function Home() {
             teachers={teachers}
             schedules={schedules}
             onEdit={(t) => setTeacherModal({ open: true, mode: 'edit', teacher: t })}
-            onDelete={handleDeleteTeacher}
+            onDelete={(id) => confirmDelete('Delete Teacher', 'Are you sure you want to delete this teacher?', () => handleDeleteTeacher(id))}
             onAdd={() => setTeacherModal({ open: true, mode: 'create' })}
           />
         )}
@@ -485,65 +768,117 @@ export default function Home() {
         {activePage === 'subjects' && (
           <SubjectsPage
             subjects={subjects}
+            schedules={schedules}
             onEdit={(s) => setSubjectModal({ open: true, mode: 'edit', subject: s })}
-            onDelete={handleDeleteSubject}
+            onDelete={(id) => confirmDelete('Delete Subject', 'Are you sure you want to delete this subject?', () => handleDeleteSubject(id))}
             onAdd={() => setSubjectModal({ open: true, mode: 'create' })}
+          />
+        )}
+
+        {activePage === 'students' && (
+          <StudentsPage
+            students={students}
+            schedules={schedules}
+            onAdd={handleAddStudent}
+            onDelete={(id) => confirmDelete('Delete Student', 'Are you sure you want to delete this student?', () => handleDeleteStudent(id))}
           />
         )}
       </div>
 
       {/* SCHEDULE MODAL */}
-      {modalState.open && (
-        <ScheduleModal
-          mode={modalState.mode}
-          schedule={modalState.schedule}
-          prefill={modalState.prefill}
-          teachers={teachers}
-          subjects={subjects}
-          yearGroups={yearGroups}
-          onSave={handleSaveSchedule}
-          onDelete={handleDeleteSchedule}
-          onClose={() => setModalState({ open: false, mode: 'create' })}
-        />
-      )}
+      {
+        modalState.open && (
+          <ScheduleModal
+            mode={modalState.mode}
+            schedule={modalState.schedule}
+            prefill={modalState.prefill}
+            teachers={teachers}
+            subjects={subjects}
+            yearGroups={yearGroups}
+            students={students}
+            onSave={handleSaveSchedule}
+            onDelete={handleDeleteSchedule}
+            onAddStudent={handleAddStudent}
+            onClose={() => setModalState({ open: false, mode: 'create' })}
+          />
+        )
+      }
 
       {/* TEACHER MODAL */}
-      {teacherModal.open && (
-        <TeacherModal
-          mode={teacherModal.mode}
-          teacher={teacherModal.teacher}
-          onSave={handleSaveTeacher}
-          onDelete={handleDeleteTeacher}
-          onClose={() => setTeacherModal({ open: false, mode: 'create' })}
-        />
-      )}
+      {
+        teacherModal.open && (
+          <TeacherModal
+            mode={teacherModal.mode}
+            teacher={teacherModal.teacher}
+            onSave={handleSaveTeacher}
+            onDelete={handleDeleteTeacher}
+            onClose={() => setTeacherModal({ open: false, mode: 'create' })}
+          />
+        )
+      }
 
       {/* SUBJECT MODAL */}
-      {subjectModal.open && (
-        <SubjectModal
-          mode={subjectModal.mode}
-          subject={subjectModal.subject}
-          onSave={handleSaveSubject}
-          onDelete={handleDeleteSubject}
-          onClose={() => setSubjectModal({ open: false, mode: 'create' })}
-        />
-      )}
+      {
+        subjectModal.open && (
+          <SubjectModal
+            mode={subjectModal.mode}
+            subject={subjectModal.subject}
+            onSave={handleSaveSubject}
+            onDelete={handleDeleteSubject}
+            onClose={() => setSubjectModal({ open: false, mode: 'create' })}
+          />
+        )
+      }
 
-      {/* TOAST */}
-      {toast && (
-        <div className="toast-container">
-          <div className={`toast toast-${toast.type}`}>
-            {toast.type === 'success' ? '✓' : '✗'} {toast.message}
+      {/* CONFIRMATION MODAL */}
+      {confirmationModal.open && (
+        <div className="modal-overlay" onClick={() => setConfirmationModal(prev => ({ ...prev, open: false }))}>
+          <div className="modal" style={{ width: 400 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">{confirmationModal.title}</h2>
+              <button className="modal-close" onClick={() => setConfirmationModal(prev => ({ ...prev, open: false }))}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ marginBottom: 24, fontSize: 14, color: 'var(--text-secondary)' }}>{confirmationModal.message}</p>
+              <div className="form-actions">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setConfirmationModal(prev => ({ ...prev, open: false }))}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-danger"
+                  onClick={() => {
+                    confirmationModal.onConfirm();
+                    setConfirmationModal(prev => ({ ...prev, open: false }));
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
-    </div>
+
+      {/* TOAST */}
+      {
+        toast && toast.message && (
+          <div className="toast-container">
+            <div className={`toast toast-${toast.type || 'success'}`}>
+              {toast.type === 'success' ? '✓' : '✗'} {toast.message}
+            </div>
+          </div>
+        )
+      }
+    </div >
   );
 }
 
 // ===== SCHEDULE MODAL =====
 function ScheduleModal({
-  mode, schedule, prefill, teachers, subjects, yearGroups, onSave, onDelete, onClose,
+  mode, schedule, prefill, teachers, subjects, yearGroups, students, onSave, onDelete, onAddStudent, onClose,
 }: {
   mode: 'create' | 'edit';
   schedule?: Schedule;
@@ -551,10 +886,15 @@ function ScheduleModal({
   teachers: Teacher[];
   subjects: Subject[];
   yearGroups: YearGroup[];
+  students: Student[];
   onSave: (data: ScheduleFormData, id?: string) => void;
   onDelete: (id: string) => void;
+  onAddStudent: (name: string) => Promise<void>;
   onClose: () => void;
 }) {
+  const [isAddingStudent, setIsAddingStudent] = useState(false);
+  const [newStudentName, setNewStudentName] = useState('');
+  const [studentSearch, setStudentSearch] = useState('');
   const [formData, setFormData] = useState<ScheduleFormData>({
     teacherId: schedule?.teacherId || prefill?.teacherId || teachers[0]?.id || '',
     subjectId: schedule?.subjectId || prefill?.subjectId || subjects[0]?.id || '',
@@ -562,7 +902,12 @@ function ScheduleModal({
     dayOfWeek: schedule?.dayOfWeek ?? prefill?.dayOfWeek ?? 0,
     startTime: schedule?.startTime || prefill?.startTime || '07:30',
     endTime: schedule?.endTime || prefill?.endTime || '08:30',
+    studentIds: schedule?.studentSchedules?.map(ss => ss.studentId) || prefill?.studentIds || [],
   });
+
+  const filteredStudents = useMemo(() => {
+    return students.filter(s => s.name.toLowerCase().includes(studentSearch.toLowerCase()));
+  }, [students, studentSearch]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -650,6 +995,102 @@ function ScheduleModal({
             </div>
           </div>
 
+          <div className="form-group">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <label className="form-label" style={{ marginBottom: 0 }}>Assign Students</label>
+              <button
+                type="button"
+                className="btn-add-new"
+                onClick={() => setIsAddingStudent(true)}
+              >
+                <span style={{ fontSize: 16, marginRight: 4 }}>+</span> Add New Student
+              </button>
+            </div>
+
+            {isAddingStudent && (
+              <div className="add-student-inline">
+                <input
+                  className="form-input"
+                  placeholder="Enter student name..."
+                  value={newStudentName}
+                  onChange={e => setNewStudentName(e.target.value)}
+                  autoFocus
+                  onKeyDown={async e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (newStudentName.trim()) {
+                        await onAddStudent(newStudentName);
+                        setNewStudentName('');
+                        setIsAddingStudent(false);
+                      }
+                    } else if (e.key === 'Escape') {
+                      setIsAddingStudent(false);
+                      setNewStudentName('');
+                    }
+                  }}
+                />
+                <button type="button" className="btn btn-primary btn-sm" onClick={async () => {
+                  if (newStudentName.trim()) {
+                    await onAddStudent(newStudentName);
+                    setNewStudentName('');
+                    setIsAddingStudent(false);
+                  }
+                }}>Add</button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => {
+                  setIsAddingStudent(false);
+                  setNewStudentName('');
+                }}>Cancel</button>
+              </div>
+            )}
+
+            {!isAddingStudent && students.length > 5 && (
+              <input
+                className="form-input"
+                style={{ marginBottom: 8, fontSize: 13, padding: '6px 10px' }}
+                placeholder="🔍 Search students..."
+                value={studentSearch}
+                onChange={e => setStudentSearch(e.target.value)}
+              />
+            )}
+
+            <div className="student-tags-container" style={{ minHeight: students.length > 0 ? 100 : 120 }}>
+              {students.length === 0 ? (
+                <div className="empty-state">
+                  <span style={{ fontSize: 20, marginBottom: 4 }}>👥</span>
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No students available</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Click "Add New Student" to get started</div>
+                </div>
+              ) : filteredStudents.length === 0 ? (
+                <div className="empty-state" style={{ padding: 12 }}>
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No students match "{studentSearch}"</div>
+                </div>
+              ) : (
+                <div className="student-tags-grid">
+                  {filteredStudents.map(s => {
+                    const isSelected = formData.studentIds?.includes(s.id) || false;
+                    return (
+                      <div
+                        key={s.id}
+                        className={`student-tag-select ${isSelected ? 'selected' : ''}`}
+                        onClick={() => {
+                          const ids = formData.studentIds || [];
+                          if (isSelected) {
+                            setFormData({ ...formData, studentIds: ids.filter(id => id !== s.id) });
+                          } else {
+                            setFormData({ ...formData, studentIds: [...ids, s.id] });
+                          }
+                        }}
+                      >
+                        <span className="student-tag-name">{s.name}</span>
+                        {isSelected && <span className="student-tag-check">✓</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="form-actions">
             {mode === 'edit' && schedule && (
               <button
@@ -697,7 +1138,10 @@ function TeachersPage({
               </div>
               <div className="card-actions">
                 <button className="card-action-btn" onClick={() => onEdit(teacher)}>✎</button>
-                <button className="card-action-btn delete" onClick={() => { if (confirm('Delete this teacher?')) onDelete(teacher.id); }}>🗑</button>
+                <button className="card-action-btn delete" onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(teacher.id);
+                }}>🗑</button>
               </div>
             </div>
             <div className="card-meta">{teacher.email}</div>
@@ -792,18 +1236,35 @@ function TeacherModal({
 
 // ===== SUBJECTS PAGE =====
 function SubjectsPage({
-  subjects, onEdit, onDelete, onAdd,
+  subjects, schedules, onEdit, onDelete, onAdd,
 }: {
   subjects: Subject[];
+  schedules: Schedule[];
   onEdit: (s: Subject) => void;
   onDelete: (id: string) => void;
   onAdd: () => void;
 }) {
-  const groupedSubjects = {
-    MAIN: subjects.filter(s => s.type === 'MAIN'),
-    INTERVENTION: subjects.filter(s => s.type === 'INTERVENTION'),
-    BOOSTER: subjects.filter(s => s.type === 'BOOSTER'),
+  const groupedSubjects: Record<string, Subject[]> = {};
+  subjects.forEach(s => {
+    const t = s.type || 'MAIN';
+    if (!groupedSubjects[t]) groupedSubjects[t] = [];
+    groupedSubjects[t].push(s);
+  });
+
+  const getSubjectClassCount = (subjectId: string) => {
+    return schedules.filter(s => s.subjectId === subjectId).length;
   };
+
+  // Sort types: MAIN, INTERVENTION, BOOSTER first, then alphabetical
+  const types = Object.keys(groupedSubjects).sort((a, b) => {
+    const order = ['MAIN', 'INTERVENTION', 'BOOSTER'];
+    const ia = order.indexOf(a);
+    const ib = order.indexOf(b);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return a.localeCompare(b);
+  });
 
   return (
     <div className="page-container">
@@ -812,10 +1273,10 @@ function SubjectsPage({
         <button className="btn btn-primary" onClick={onAdd}>+ Add Subject</button>
       </div>
 
-      {(['MAIN', 'INTERVENTION', 'BOOSTER'] as const).map(type => (
+      {types.map(type => (
         <div key={type} style={{ marginBottom: 32 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className={`badge badge-${type.toLowerCase()}`}>{type}</span>
+            <span className={`badge badge-${type.toLowerCase()}`} style={{ textTransform: 'uppercase' }}>{type}</span>
             <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
               ({groupedSubjects[type].length} subjects)
             </span>
@@ -830,8 +1291,14 @@ function SubjectsPage({
                   </div>
                   <div className="card-actions">
                     <button className="card-action-btn" onClick={() => onEdit(subject)}>✎</button>
-                    <button className="card-action-btn delete" onClick={() => { if (confirm('Delete this subject?')) onDelete(subject.id); }}>🗑</button>
+                    <button className="card-action-btn delete" onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(subject.id);
+                    }}>🗑</button>
                   </div>
+                </div>
+                <div className="card-meta" style={{ marginTop: 8, color: '#818cf8', fontWeight: 500 }}>
+                  📚 {getSubjectClassCount(subject.id)} scheduled classes
                 </div>
               </div>
             ))}
@@ -854,7 +1321,8 @@ function SubjectModal({
 }) {
   const [name, setName] = useState(subject?.name || '');
   const [color, setColor] = useState(subject?.color || SUBJECT_COLORS[0]);
-  const [type, setType] = useState(subject?.type || 'MAIN');
+  const [type, setType] = useState<string>(subject?.type || 'MAIN');
+  const [isAddingType, setIsAddingType] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -882,11 +1350,55 @@ function SubjectModal({
           </div>
           <div className="form-group">
             <label className="form-label">Type</label>
-            <select className="form-select" value={type} onChange={e => setType(e.target.value as 'MAIN' | 'INTERVENTION' | 'BOOSTER')}>
-              <option value="MAIN">Main</option>
-              <option value="INTERVENTION">Intervention</option>
-              <option value="BOOSTER">Booster</option>
-            </select>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {isAddingType ? (
+                <>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={type}
+                    onChange={e => setType(e.target.value)}
+                    placeholder="Enter new type"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ padding: '0 12px' }}
+                    onClick={() => {
+                      setIsAddingType(false);
+                      setType(subject?.type || 'MAIN');
+                    }}
+                  >Cancel</button>
+                </>
+              ) : (
+                <>
+                  <select
+                    className="form-select"
+                    value={type}
+                    onChange={e => setType(e.target.value)}
+                  >
+                    {['MAIN', 'INTERVENTION', 'BOOSTER'].map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                    {/* If current type is custom, show it as option */}
+                    {!['MAIN', 'INTERVENTION', 'BOOSTER'].includes(type) && (
+                      <option value={type}>{type}</option>
+                    )}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ padding: '0 12px', minWidth: '40px' }}
+                    onClick={() => {
+                      setIsAddingType(true);
+                      setType('');
+                    }}
+                    title="Add new type"
+                  >+</button>
+                </>
+              )}
+            </div>
           </div>
           <div className="form-group">
             <label className="form-label">Color</label>
@@ -914,6 +1426,76 @@ function SubjectModal({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// ===== STUDENTS PAGE =====
+function StudentsPage({ students, schedules, onAdd, onDelete }: { students: Student[], schedules: Schedule[], onAdd: (name: string) => void, onDelete: (id: string) => void }) {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onAdd(newName);
+    setNewName('');
+    setIsModalOpen(false);
+  };
+
+  const getStudentClassCount = (studentId: string) => {
+    return schedules.filter(s => s.studentSchedules?.some(ss => ss.studentId === studentId)).length;
+  };
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <h1 className="page-title">Students</h1>
+        <button className="btn btn-primary" onClick={() => setIsModalOpen(true)}>+ Add Student</button>
+      </div>
+      <div className="card-grid">
+        {students.map(s => (
+          <div key={s.id} className="card">
+            <div className="card-header">
+              <div className="card-name">
+                <div style={{
+                  width: 32, height: 32, borderRadius: 8,
+                  background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 16
+                }}>👤</div>
+                {s.name}
+              </div>
+              <button className="card-action-btn delete" onClick={() => {
+                onDelete(s.id);
+              }}>🗑</button>
+            </div>
+            <div className="card-meta" style={{ marginTop: 8, color: '#818cf8', fontWeight: 500 }}>
+              📚 Assigned to {getStudentClassCount(s.id)} classes
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {isModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
+          <div className="modal" style={{ width: 400 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">Add Student</h2>
+              <button className="modal-close" onClick={() => setIsModalOpen(false)}>×</button>
+            </div>
+            <form className="modal-body" onSubmit={handleSubmit}>
+              <div className="form-group">
+                <label className="form-label">Name</label>
+                <input className="form-input" value={newName} onChange={e => setNewName(e.target.value)} required autoFocus placeholder="Student Name" />
+              </div>
+              <div className="form-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setIsModalOpen(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Add Student</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

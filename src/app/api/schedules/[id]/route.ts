@@ -5,7 +5,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     try {
         const { id } = await params;
         const body = await request.json();
-        const { teacherId, subjectId, yearGroupId, dayOfWeek, startTime, endTime } = body;
+        const { teacherId, subjectId, yearGroupId, dayOfWeek, startTime, endTime, studentIds } = body;
 
         const schedule = await prisma.schedule.update({
             where: { id },
@@ -16,8 +16,21 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
                 ...(dayOfWeek !== undefined && { dayOfWeek }),
                 ...(startTime && { startTime }),
                 ...(endTime && { endTime }),
+                ...(studentIds && {
+                    studentSchedules: {
+                        deleteMany: {},
+                        create: studentIds.map((sid: string) => ({ studentId: sid }))
+                    }
+                })
             },
-            include: { teacher: true, subject: true, yearGroup: true },
+            include: {
+                teacher: true,
+                subject: true,
+                yearGroup: true,
+                studentSchedules: {
+                    include: { student: true }
+                }
+            },
         });
         return NextResponse.json(schedule);
     } catch (error) {

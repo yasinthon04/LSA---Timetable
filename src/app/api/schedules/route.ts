@@ -21,6 +21,9 @@ export async function GET(request: NextRequest) {
                 teacher: true,
                 subject: true,
                 yearGroup: true,
+                studentSchedules: {
+                    include: { student: true }
+                }
             },
             orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
         });
@@ -33,15 +36,27 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { teacherId, subjectId, yearGroupId, dayOfWeek, startTime, endTime } = body;
+        const { teacherId, subjectId, yearGroupId, dayOfWeek, startTime, endTime, studentIds } = body;
 
         if (!teacherId || !subjectId || !yearGroupId || dayOfWeek === undefined || !startTime || !endTime) {
             return NextResponse.json({ error: 'All fields are required' }, { status: 400 });
         }
 
         const schedule = await prisma.schedule.create({
-            data: { teacherId, subjectId, yearGroupId, dayOfWeek, startTime, endTime },
-            include: { teacher: true, subject: true, yearGroup: true },
+            data: {
+                teacherId, subjectId, yearGroupId, dayOfWeek, startTime, endTime,
+                studentSchedules: studentIds && studentIds.length > 0 ? {
+                    create: studentIds.map((sid: string) => ({ studentId: sid }))
+                } : undefined
+            },
+            include: {
+                teacher: true,
+                subject: true,
+                yearGroup: true,
+                studentSchedules: {
+                    include: { student: true }
+                }
+            },
         });
         return NextResponse.json(schedule, { status: 201 });
     } catch (error) {

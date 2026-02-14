@@ -45,15 +45,33 @@ model YearSubject {
 }
 
 model Schedule {
-  id          String    @id @default(uuid())
-  teacherId   String
-  subjectId   String
-  yearGroupId String
-  dayOfWeek   Int       // 0=Monday, 1=Tuesday, ..., 4=Friday
-  startTime   String    // "HH:mm" format
-  endTime     String    // "HH:mm" format
-  createdAt   DateTime  @default(now())
-  teacher     Teacher   @relation(fields: [teacherId], references: [id], onDelete: Cascade)
-  subject     Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  yearGroup   YearGroup @relation(fields: [yearGroupId], references: [id], onDelete: Cascade)
+  id               String            @id @default(uuid())
+  teacherId        String
+  subjectId        String
+  yearGroupId      String
+  dayOfWeek        Int // 0=Monday, 1=Tuesday, ..., 4=Friday
+  startTime        String // "HH:mm" format
+  endTime          String // "HH:mm" format
+  createdAt        DateTime          @default(now())
+  teacher          Teacher           @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  subject          Subject           @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  yearGroup        YearGroup         @relation(fields: [yearGroupId], references: [id], onDelete: Cascade)
+  studentSchedules StudentSchedule[]
+}
+
+model Student {
+  id        String            @id @default(uuid())
+  name      String
+  createdAt DateTime          @default(now())
+  schedules StudentSchedule[]
+}
+
+model StudentSchedule {
+  id         String   @id @default(uuid())
+  studentId  String
+  scheduleId String
+  student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  schedule   Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, scheduleId])
 }
