@@ -17,13 +17,21 @@ export const authOptions: NextAuthOptions = {
                     throw new Error("Invalid credentials");
                 }
 
+                console.log("🔐 Auth attempt for:", credentials.email);
+
                 const user = await prisma.user.findUnique({
                     where: {
                         email: credentials.email,
                     },
                 });
 
-                if (!user || !user.password) {
+                if (!user) {
+                    console.log("❌ User not found:", credentials.email);
+                    throw new Error("Invalid credentials");
+                }
+
+                if (!user.password) {
+                    console.log("❌ User has no password set:", credentials.email);
                     throw new Error("Invalid credentials");
                 }
 
@@ -33,9 +41,11 @@ export const authOptions: NextAuthOptions = {
                 );
 
                 if (!isCorrectPassword) {
+                    console.log("❌ Password incorrect for:", credentials.email);
                     throw new Error("Invalid credentials");
                 }
 
+                console.log("✅ Auth successful for:", credentials.email);
                 return user;
             },
         }),
