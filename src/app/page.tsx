@@ -758,21 +758,13 @@ export default function Home() {
                             flexBasis: 0,
                           }}
                         >
-                          <div className="header-period-top">
-                            <div className="header-time">
-                              {['b1', 'b2', 'end'].includes(p.id) ? (
-                                <>
-                                  <span>{p.start}</span>
-                                  <div style={{ width: '100%', height: 0 }}></div>
-                                  <span>- {p.end}</span>
-                                </>
-                              ) : (
-                                <span>{p.start} - {p.end}</span>
-                              )}
+                          <div className="header-period-combined">
+                            <div className="header-name">{p.display || ''}</div>
+                            <div className="header-time-range">
+                              <span>{p.start}</span>
+                              <span className="time-sep">-</span>
+                              <span>{p.end}</span>
                             </div>
-                          </div>
-                          <div className="header-period-bottom">
-                            {p.display || ''}
                           </div>
                         </div>
                       );
