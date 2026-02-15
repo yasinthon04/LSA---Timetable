@@ -5,11 +5,18 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 if (!process.env.DATABASE_URL) {
-    console.error("❌ DATABASE_URL is not defined in environment variables!");
+    console.error("❌ DATABASE_URL is MISSION in environment variables!");
 } else {
-    console.log("🌏 DATABASE_URL is detected.");
+    const maskedUrl = process.env.DATABASE_URL.replace(/:[^:@]+@/, ':****@');
+    console.log("🌏 DATABASE_URL detected:", maskedUrl.substring(0, 20) + "...");
 }
 
-export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+export const prisma = globalForPrisma.prisma ?? new PrismaClient({
+    datasources: {
+        db: {
+            url: process.env.DATABASE_URL,
+        },
+    },
+});
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
