@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { signOut, useSession } from 'next-auth/react';
+import Link from 'next/link';
 import {
   Schedule, Teacher, Subject, YearGroup, Student,
   ScheduleFormData, DAY_NAMES, SCHOOL_START, SCHOOL_END,
@@ -58,6 +60,7 @@ function isScheduleInPeriod(schedule: Schedule, periodStart: string, periodEnd: 
 type ActivePage = 'calendar' | 'teachers' | 'subjects' | 'students';
 
 export default function Home() {
+  const { data: session } = useSession();
   const [activePage, setActivePage] = useState<ActivePage>('calendar');
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
@@ -96,6 +99,8 @@ export default function Home() {
     message: string;
     onConfirm: () => void;
   }>({ open: false, title: '', message: '', onConfirm: () => { } });
+
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   const confirmDelete = (title: string, message: string, onConfirm: () => void) => {
     setConfirmationModal({ open: true, title, message, onConfirm });
@@ -177,6 +182,8 @@ export default function Home() {
       showToast('Failed to save schedule', 'error');
     }
   };
+
+
 
   // Drag & Drop Handlers
   const handleDragStart = (e: React.DragEvent, type: 'create' | 'move', data: { subjectId?: string; scheduleId?: string }) => {
@@ -562,13 +569,40 @@ export default function Home() {
         {/* TOP NAV */}
         <nav className="topnav">
           <div className="topnav-links">
-            <a className={`topnav-link ${activePage === 'calendar' ? 'active' : ''}`} onClick={() => setActivePage('calendar')}>Calendar</a>
+            <a className={`topnav-link ${activePage === 'calendar' ? 'active' : ''}`} onClick={() => setActivePage('calendar')}>Timetable</a>
             <a className={`topnav-link ${activePage === 'teachers' ? 'active' : ''}`} onClick={() => setActivePage('teachers')}>Teachers</a>
             <a className={`topnav-link ${activePage === 'subjects' ? 'active' : ''}`} onClick={() => setActivePage('subjects')}>Subjects</a>
             <a className={`topnav-link ${activePage === 'students' ? 'active' : ''}`} onClick={() => setActivePage('students')}>Students</a>
           </div>
           <div className="topnav-right">
-            <div className="topnav-avatar">A</div>
+            {session?.user && (
+              <div style={{ position: 'relative' }}>
+                <div
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+                  onClick={() => setUserMenuOpen(!userMenuOpen)}
+                >
+                  <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{session.user.name || session.user.email}</span>
+                  <div className="topnav-avatar">
+                    {session.user.name ? session.user.name[0].toUpperCase() : (session.user.email ? session.user.email[0].toUpperCase() : 'A')}
+                  </div>
+                </div>
+
+                {userMenuOpen && (
+                  <div className="user-dropdown-menu">
+                    <Link
+                      className="user-dropdown-item"
+                      href="/profile"
+                      style={{ textDecoration: 'none', display: 'block' }}
+                      onClick={() => setUserMenuOpen(false)}
+                    >
+                      Edit Profile
+                    </Link>
+                    <div className="user-dropdown-divider"></div>
+                    <div className="user-dropdown-item danger" onClick={() => signOut()}>Sign Out</div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </nav>
 
@@ -587,17 +621,33 @@ export default function Home() {
               position: 'sticky', top: 0, zIndex: 10 // Sticky header
             }}>
               <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Filter by Year:</span>
-              <select
-                className="form-select"
-                style={{ width: 'auto', padding: '6px 12px', fontSize: 13, borderColor: 'var(--border-primary)' }}
-                value={selectedYearGroup}
-                onChange={(e) => setSelectedYearGroup(e.target.value)}
-              >
-                <option value="">All Years</option>
-                {yearGroups.map(yg => (
-                  <option key={yg.id} value={yg.id}>{yg.name}</option>
-                ))}
-              </select>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <select
+                  className="form-select"
+                  style={{
+                    width: 'auto',
+                    padding: '6px 32px 6px 12px',
+                    fontSize: 13,
+                    borderColor: 'var(--border-primary)',
+                    appearance: 'none',
+                    WebkitAppearance: 'none',
+                    cursor: 'pointer',
+                    backgroundImage: 'none'
+                  }}
+                  value={selectedYearGroup}
+                  onChange={(e) => setSelectedYearGroup(e.target.value)}
+                >
+                  <option value="">All Years</option>
+                  {yearGroups.map(yg => (
+                    <option key={yg.id} value={yg.id}>{yg.name}</option>
+                  ))}
+                </select>
+                <div style={{ position: 'absolute', right: 10, pointerEvents: 'none', color: 'var(--text-secondary)', display: 'flex' }}>
+                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </div>
             </div>
 
             {/* TEACHER MATRIX */}
@@ -635,7 +685,7 @@ export default function Home() {
 
                 // Filter teachers:
                 // 1. Must be in selectedTeacherIds (if any selected)
-                // 2. If subjects selected, must handle whether to show teacher. 
+                // 2. If subjects selected, must handle whether to show teacher.
                 //    Let's filter schedules first then decide if teacher shows.
 
                 const currentTeachers = teachers
@@ -825,6 +875,7 @@ export default function Home() {
           />
         )
       }
+
 
       {/* CONFIRMATION MODAL */}
       {
