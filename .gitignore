@@ -34,3 +34,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# database and setup
+/prisma/create-admin.ts
+*.db
+*.db-journal
