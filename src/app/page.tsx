@@ -189,7 +189,14 @@ export default function Home() {
 
   // Schedule CRUD
   const handleSaveSchedule = async (data: ScheduleFormData, id?: string) => {
+    const previousSchedules = [...schedules];
+
     try {
+      // Optimistic update for existing schedules
+      if (id) {
+        setSchedules(prev => prev.map(s => s.id === id ? { ...s, ...data } as Schedule : s));
+      }
+
       const method = id ? 'PUT' : 'POST';
       const url = id ? `/api/schedules/${id}` : '/api/schedules';
       const res = await fetch(url, {
@@ -204,10 +211,13 @@ export default function Home() {
         throw new Error(result.details || result.error || 'Unknown error');
       }
 
+      // Re-fetch to get complete data (like relations/students) or update IDs for new items
       await fetchSchedules();
       setModalState({ open: false, mode: 'create' });
       showToast(id ? 'Schedule updated' : 'Schedule created');
     } catch (err: any) {
+      // Rollback on error
+      setSchedules(previousSchedules);
       console.error('Save error:', err);
       showToast(`Failed to save: ${err.message}`, 'error');
     }
@@ -365,13 +375,19 @@ export default function Home() {
   };
 
   const handleDeleteSchedule = async (id: string) => {
+    const previousSchedules = [...schedules];
     try {
+      // Optimistic delete
+      setSchedules(prev => prev.filter(s => s.id !== id));
+
       const res = await fetch(`/api/schedules/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error();
       await fetchSchedules();
       setModalState({ open: false, mode: 'create' });
       showToast('Schedule deleted');
     } catch {
+      // Rollback
+      setSchedules(previousSchedules);
       showToast('Failed to delete schedule', 'error');
     }
   };
