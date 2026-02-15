@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
     try {
         const yearGroups = await prisma.yearGroup.findMany({

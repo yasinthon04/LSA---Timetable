@@ -124,10 +124,10 @@ export default function Home() {
   const fetchData = useCallback(async () => {
     try {
       const [teachersRes, subjectsRes, yearGroupsRes, studentsRes] = await Promise.all([
-        fetch('/api/teachers'),
-        fetch('/api/subjects'),
-        fetch('/api/year-groups'),
-        fetch('/api/students'),
+        fetch('/api/teachers', { cache: 'no-store' }),
+        fetch('/api/subjects', { cache: 'no-store' }),
+        fetch('/api/year-groups', { cache: 'no-store' }),
+        fetch('/api/students', { cache: 'no-store' }),
       ]);
       const [t, s, y, st] = await Promise.all([
         teachersRes.json(),
@@ -148,7 +148,7 @@ export default function Home() {
 
   const fetchSchedules = useCallback(async () => {
     try {
-      const res = await fetch('/api/schedules');
+      const res = await fetch('/api/schedules', { cache: 'no-store' });
       const data = await res.json();
       setSchedules(data);
     } catch {
@@ -644,9 +644,9 @@ export default function Home() {
             </svg>
           </button>
           <div className="topnav-links">
-            <a className={`topnav-link ${activePage === 'calendar' ? 'active' : ''}`} onClick={() => setActivePage('calendar')}>LSA Timetable</a>
-            <a className={`topnav-link ${activePage === 'teachers' ? 'active' : ''}`} onClick={() => setActivePage('teachers')}>Teachers</a>
+            <a className={`topnav-link ${activePage === 'calendar' ? 'active' : ''}`} onClick={() => setActivePage('calendar')}>Timetable</a>
             <a className={`topnav-link ${activePage === 'subjects' ? 'active' : ''}`} onClick={() => setActivePage('subjects')}>Subjects</a>
+            <a className={`topnav-link ${activePage === 'teachers' ? 'active' : ''}`} onClick={() => setActivePage('teachers')}>Teachers</a>
             <a className={`topnav-link ${activePage === 'students' ? 'active' : ''}`} onClick={() => setActivePage('students')}>Students</a>
           </div>
           <div className="topnav-right">
