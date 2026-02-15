@@ -42,8 +42,7 @@ const TIME_PERIODS = [
   { id: 'p3', label: '10:20 - 11:20', start: '10:20', end: '11:20', display: '3' },
   { id: 'p4', label: '11:20 - 12:20', start: '11:20', end: '12:20', display: '4' },
   { id: 'p5', label: '12:20 - 13:10', start: '12:20', end: '13:10', display: '5' },
-  { id: 'b2', label: '13:10 - 13:15', start: '13:10', end: '13:15', isBreak: true },
-  { id: 'p6', label: '13:15 - 14:15', start: '13:15', end: '14:15', display: '6' },
+  { id: 'p6', label: '13:10 - 14:15', start: '13:10', end: '14:15', display: '6' },
   { id: 'end', label: '14:15 - 14:30', start: '14:15', end: '14:30', isBreak: true },
 ];
 
@@ -61,6 +60,7 @@ type ActivePage = 'calendar' | 'teachers' | 'subjects' | 'students';
 
 export default function Home() {
   const { data: session } = useSession();
+  const isAdmin = (session?.user as any)?.role === 'ADMIN';
   const [activePage, setActivePage] = useState<ActivePage>('calendar');
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
@@ -76,7 +76,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [modalState, setModalState] = useState<{
     open: boolean;
-    mode: 'create' | 'edit';
+    mode: 'create' | 'edit' | 'read';
     schedule?: Schedule;
     prefill?: Partial<ScheduleFormData>;
   }>({ open: false, mode: 'create' });
@@ -461,8 +461,8 @@ export default function Home() {
                 <div
                   key={subject.id}
                   className={`sidebar-item ${selectedSubjectIds.has(subject.id) ? 'active' : ''}`}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, 'create', { subjectId: subject.id })}
+                  draggable={isAdmin}
+                  onDragStart={(e) => isAdmin && handleDragStart(e, 'create', { subjectId: subject.id })}
                   onClick={() => {
                     setSelectedSubjectIds(prev => {
                       const next = new Set(prev);
@@ -488,8 +488,8 @@ export default function Home() {
                 <div
                   key={subject.id}
                   className={`sidebar-item ${selectedSubjectIds.has(subject.id) ? 'active' : ''}`}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, 'create', { subjectId: subject.id })}
+                  draggable={isAdmin}
+                  onDragStart={(e) => isAdmin && handleDragStart(e, 'create', { subjectId: subject.id })}
                   onClick={() => {
                     setSelectedSubjectIds(prev => {
                       const next = new Set(prev);
@@ -581,9 +581,25 @@ export default function Home() {
                   style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
                 >
-                  <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{session.user.name || session.user.email}</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>{session.user.name || session.user.email}</span>
+                    {(session.user as any).role && (
+                      <span style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: '1px 6px',
+                        borderRadius: 4,
+                        background: (session.user as any).role === 'ADMIN' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(99, 102, 241, 0.1)',
+                        color: (session.user as any).role === 'ADMIN' ? '#ef4444' : '#6366f1',
+                        border: `1px solid ${(session.user as any).role === 'ADMIN' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(99, 102, 241, 0.2)'}`,
+                        letterSpacing: '0.05em'
+                      }}>
+                        Role: {(session.user as any).role}
+                      </span>
+                    )}
+                  </div>
                   <div className="topnav-avatar">
-                    {session.user.name ? session.user.name[0].toUpperCase() : (session.user.email ? session.user.email[0].toUpperCase() : 'A')}
+                    {session.user.name?.[0]?.toUpperCase() || session.user.email?.[0]?.toUpperCase() || 'A'}
                   </div>
                 </div>
 
@@ -618,7 +634,6 @@ export default function Home() {
               padding: '12px 24px',
               borderBottom: '1px solid var(--border-primary)',
               background: 'var(--bg-secondary)', // Distinct background
-              position: 'sticky', top: 0, zIndex: 10 // Sticky header
             }}>
               <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>Filter by Year:</span>
               <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -654,28 +669,43 @@ export default function Home() {
             <div className="timetable-matrix">
               {/* Main Header (Periods) */}
               <div className="matrix-header-row">
-                <div className="header-cell col-day">Day</div>
-                <div className="header-cell col-teacher">Teacher</div>
-                {TIME_PERIODS.map(p => (
-                  <div key={p.id} className={`header-cell col-period ${p.isBreak ? 'is-break' : ''} ${p.id === 'hr' ? 'is-hr' : ''}`}>
-                    <div className="header-period-top">
-                      <div className="header-time">
-                        {['b1', 'b2', 'end'].includes(p.id) ? (
-                          <>
-                            <span>{p.start}</span>
-                            <div style={{ width: '100%', height: 0 }}></div>
-                            <span>- {p.end}</span>
-                          </>
-                        ) : (
-                          <span>{p.start} - {p.end}</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="header-period-bottom">
-                      {p.display || ''}
-                    </div>
+                <div className="col-day header-cell">Day</div>
+                <div className="day-teachers-col" style={{ flex: 1 }}>
+                  <div className="teacher-row" style={{ borderBottom: 'none', background: 'transparent' }}>
+                    <div className="col-teacher header-cell">Teacher</div>
+                    {TIME_PERIODS.map((p, index) => {
+                      const duration = timeToMinutes(p.end) - timeToMinutes(p.start);
+                      return (
+                        <div
+                          key={`${p.id}-${index}`}
+                          className={`header-cell col-period ${p.isBreak ? 'is-break' : ''} ${p.id === 'p0' ? 'is-hr' : ''}`}
+                          style={{
+                            flexGrow: duration,
+                            flexShrink: 0,
+                            flexBasis: 0,
+                          }}
+                        >
+                          <div className="header-period-top">
+                            <div className="header-time">
+                              {['b1', 'b2', 'end'].includes(p.id) ? (
+                                <>
+                                  <span>{p.start}</span>
+                                  <div style={{ width: '100%', height: 0 }}></div>
+                                  <span>- {p.end}</span>
+                                </>
+                              ) : (
+                                <span>{p.start} - {p.end}</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="header-period-bottom">
+                            {p.display || ''}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                ))}
+                </div>
               </div>
 
               {/* Day Groups */}
@@ -710,7 +740,7 @@ export default function Home() {
                 return (
                   <div key={dayIdx} className="day-group">
                     {/* Day Label Column */}
-                    <div className="day-label-col">
+                    <div className="col-day">
                       <div className="day-name-vertical">{dayName}</div>
                     </div>
 
@@ -728,51 +758,94 @@ export default function Home() {
 
                         return (
                           <div key={teacher.id} className="teacher-row">
-                            <div className="teacher-name-cell">
+                            <div className="col-teacher">
                               <span className="teacher-dot" style={{ backgroundColor: teacher.color }}></span>
                               {teacher.name}
                             </div>
 
                             {/* Period Cells */}
-                            {TIME_PERIODS.map(period => {
+                            {/* Period Cells */}
+                            {TIME_PERIODS.map((period, pIndex) => { // Use index to avoid duplicate ID issues
+                              const periodStart = timeToMinutes(period.start);
+                              const periodEnd = timeToMinutes(period.end);
+                              const periodDuration = periodEnd - periodStart;
+
                               const periodScheds = rowSchedules.filter(s => isScheduleInPeriod(s, period.start, period.end));
                               const isBusy = periodScheds.length > 0;
                               const sched = periodScheds[0];
 
+                              // Calculate card style if busy
+                              let cardStyle: React.CSSProperties = {};
+                              if (isBusy && sched) {
+                                const schedStart = timeToMinutes(sched.startTime);
+                                const schedEnd = timeToMinutes(sched.endTime);
+                                const effStart = Math.max(schedStart, periodStart);
+                                const effEnd = Math.min(schedEnd, periodEnd); // Clamp to period
+
+                                const schedDuration = effEnd - effStart;
+                                const offset = effStart - periodStart;
+
+                                const widthPercent = (schedDuration / periodDuration) * 100;
+                                const leftPercent = (offset / periodDuration) * 100;
+
+                                cardStyle = {
+                                  position: 'absolute',
+                                  left: `${leftPercent}%`,
+                                  width: `${widthPercent}%`,
+                                  height: '100%',
+                                  top: 0,
+                                  backgroundColor: sched.subject?.color,
+                                  zIndex: 5,
+                                  borderRadius: 4,
+                                  overflow: 'hidden',
+                                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                                };
+                              }
+
                               return (
                                 <div
-                                  key={period.id}
-                                  className={`period-cell ${isBusy ? 'busy' : ''} ${period.isBreak ? 'break' : ''} ${period.id === 'hr' ? 'is-hr' : ''}`}
-                                  style={isBusy ? { backgroundColor: sched.subject?.color } : {}}
-
-                                  // Drag Source (if busy)
-                                  draggable={isBusy}
-                                  onDragStart={(e) => {
-                                    if (isBusy) handleDragStart(e, 'move', { scheduleId: sched.id });
+                                  key={`${period.id}-${pIndex}`}
+                                  className={`period-cell ${period.isBreak ? 'is-break' : ''} ${period.id === 'p0' ? 'is-hr' : ''}`}
+                                  style={{
+                                    flexGrow: periodDuration,
+                                    flexShrink: 0,
+                                    flexBasis: 0,
+                                    position: 'relative',
                                   }}
 
-                                  // Drop Target
-                                  onDragOver={handleDragOver}
-                                  onDrop={(e) => handleDrop(e, teacher.id, dayIdx, period)}
+                                  // Drop Target (Container)
+                                  onDragOver={isAdmin ? handleDragOver : undefined}
+                                  onDrop={isAdmin ? (e) => handleDrop(e, teacher.id, dayIdx, period) : undefined}
 
+                                  // Click empty space -> Create
                                   onClick={() => {
-                                    if (isBusy) {
-                                      setModalState({ open: true, mode: 'edit', schedule: sched });
-                                    } else {
-                                      setModalState({
-                                        open: true, mode: 'create', prefill: {
-                                          teacherId: teacher.id,
-                                          dayOfWeek: dayIdx,
-                                          startTime: period.start,
-                                          endTime: period.end,
-                                          yearGroupId: selectedYearGroup || (yearGroups.length > 0 ? yearGroups[0].id : ''),
-                                        }
-                                      });
-                                    }
+                                    if (!isAdmin) return;
+                                    setModalState({
+                                      open: true, mode: 'create', prefill: {
+                                        teacherId: teacher.id,
+                                        dayOfWeek: dayIdx,
+                                        startTime: period.start,
+                                        endTime: period.end,
+                                        yearGroupId: selectedYearGroup || (yearGroups.length > 0 ? yearGroups[0].id : ''),
+                                      }
+                                    });
                                   }}
                                 >
-                                  {isBusy && (
-                                    <div className="cell-content">
+                                  {isBusy && sched && (
+                                    <div
+                                      className="cell-content"
+                                      style={cardStyle}
+                                      draggable={isAdmin}
+                                      onDragStart={(e) => {
+                                        if (!isAdmin) return;
+                                        e.stopPropagation();
+                                        handleDragStart(e, 'move', { scheduleId: sched.id });
+                                      }}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setModalState({ open: true, mode: isAdmin ? 'edit' : 'read', schedule: sched });
+                                      }}
+                                    >
                                       <div className="cell-subject">{sched.subject?.name}</div>
                                       <div className="cell-time">{yearGroups.find(y => y.id === sched.yearGroupId)?.name || sched.yearGroupId}</div>
                                       {sched.studentSchedules && sched.studentSchedules.length > 0 && (
@@ -805,6 +878,7 @@ export default function Home() {
           <TeachersPage
             teachers={teachers}
             schedules={schedules}
+            isAdmin={isAdmin}
             onEdit={(t) => setTeacherModal({ open: true, mode: 'edit', teacher: t })}
             onDelete={(id) => confirmDelete('Delete Teacher', 'Are you sure you want to delete this teacher?', () => handleDeleteTeacher(id))}
             onAdd={() => setTeacherModal({ open: true, mode: 'create' })}
@@ -815,6 +889,7 @@ export default function Home() {
           <SubjectsPage
             subjects={subjects}
             schedules={schedules}
+            isAdmin={isAdmin}
             onEdit={(s) => setSubjectModal({ open: true, mode: 'edit', subject: s })}
             onDelete={(id) => confirmDelete('Delete Subject', 'Are you sure you want to delete this subject?', () => handleDeleteSubject(id))}
             onAdd={() => setSubjectModal({ open: true, mode: 'create' })}
@@ -825,6 +900,7 @@ export default function Home() {
           <StudentsPage
             students={students}
             schedules={schedules}
+            isAdmin={isAdmin}
             onAdd={handleAddStudent}
             onDelete={(id) => confirmDelete('Delete Student', 'Are you sure you want to delete this student?', () => handleDeleteStudent(id))}
           />
@@ -842,6 +918,7 @@ export default function Home() {
             subjects={subjects}
             yearGroups={yearGroups}
             students={students}
+            isAdmin={isAdmin}
             onSave={handleSaveSchedule}
             onDelete={handleDeleteSchedule}
             onAddStudent={handleAddStudent}
@@ -927,15 +1004,16 @@ export default function Home() {
 
 // ===== SCHEDULE MODAL =====
 function ScheduleModal({
-  mode, schedule, prefill, teachers, subjects, yearGroups, students, onSave, onDelete, onAddStudent, onClose,
+  mode, schedule, prefill, teachers, subjects, yearGroups, students, isAdmin, onSave, onDelete, onAddStudent, onClose,
 }: {
-  mode: 'create' | 'edit';
+  mode: 'create' | 'edit' | 'read';
   schedule?: Schedule;
   prefill?: Partial<ScheduleFormData>;
   teachers: Teacher[];
   subjects: Subject[];
   yearGroups: YearGroup[];
   students: Student[];
+  isAdmin: boolean;
   onSave: (data: ScheduleFormData, id?: string) => void;
   onDelete: (id: string) => void;
   onAddStudent: (name: string) => Promise<void>;
@@ -967,7 +1045,9 @@ function ScheduleModal({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 className="modal-title">{mode === 'create' ? 'New Schedule' : 'Edit Schedule'}</h2>
+          <h2 className="modal-title">
+            {mode === 'create' ? 'New Schedule' : mode === 'edit' ? 'Edit Schedule' : 'Schedule Details'}
+          </h2>
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
         <form className="modal-body" onSubmit={handleSubmit}>
@@ -975,6 +1055,7 @@ function ScheduleModal({
             <label className="form-label">Teacher</label>
             <select
               className="form-select"
+              disabled={!isAdmin}
               value={formData.teacherId}
               onChange={e => setFormData({ ...formData, teacherId: e.target.value })}
             >
@@ -988,6 +1069,7 @@ function ScheduleModal({
             <label className="form-label">Subject</label>
             <select
               className="form-select"
+              disabled={!isAdmin}
               value={formData.subjectId}
               onChange={e => setFormData({ ...formData, subjectId: e.target.value })}
             >
@@ -1001,6 +1083,7 @@ function ScheduleModal({
             <label className="form-label">Year Group</label>
             <select
               className="form-select"
+              disabled={!isAdmin}
               value={formData.yearGroupId}
               onChange={e => setFormData({ ...formData, yearGroupId: e.target.value })}
             >
@@ -1014,6 +1097,7 @@ function ScheduleModal({
             <label className="form-label">Day</label>
             <select
               className="form-select"
+              disabled={!isAdmin}
               value={formData.dayOfWeek}
               onChange={e => setFormData({ ...formData, dayOfWeek: parseInt(e.target.value) })}
             >
@@ -1029,6 +1113,7 @@ function ScheduleModal({
               <input
                 type="time"
                 className="form-input"
+                disabled={!isAdmin}
                 value={formData.startTime}
                 onChange={e => setFormData({ ...formData, startTime: e.target.value })}
               />
@@ -1038,6 +1123,7 @@ function ScheduleModal({
               <input
                 type="time"
                 className="form-input"
+                disabled={!isAdmin}
                 value={formData.endTime}
                 onChange={e => setFormData({ ...formData, endTime: e.target.value })}
               />
@@ -1047,13 +1133,15 @@ function ScheduleModal({
           <div className="form-group">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <label className="form-label" style={{ marginBottom: 0 }}>Assign Students</label>
-              <button
-                type="button"
-                className="btn-add-new"
-                onClick={() => setIsAddingStudent(true)}
-              >
-                <span style={{ fontSize: 16, marginRight: 4 }}>+</span> Add New Student
-              </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="btn-add-new"
+                  onClick={() => setIsAddingStudent(true)}
+                >
+                  <span style={{ fontSize: 16, marginRight: 4 }}>+</span> Add New Student
+                </button>
+              )}
             </div>
 
             {isAddingStudent && (
@@ -1120,8 +1208,9 @@ function ScheduleModal({
                     return (
                       <div
                         key={s.id}
-                        className={`student-tag-select ${isSelected ? 'selected' : ''}`}
+                        className={`student-tag-select ${isSelected ? 'selected' : ''} ${!isAdmin ? 'disabled' : ''}`}
                         onClick={() => {
+                          if (!isAdmin) return;
                           const ids = formData.studentIds || [];
                           if (isSelected) {
                             setFormData({ ...formData, studentIds: ids.filter(id => id !== s.id) });
@@ -1141,7 +1230,7 @@ function ScheduleModal({
           </div>
 
           <div className="form-actions">
-            {mode === 'edit' && schedule && (
+            {mode === 'edit' && schedule && isAdmin && (
               <button
                 type="button"
                 className="btn btn-danger"
@@ -1150,10 +1239,14 @@ function ScheduleModal({
                 Delete
               </button>
             )}
-            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary">
-              {mode === 'create' ? 'Create' : 'Save'}
+            <button type="button" className="btn btn-secondary" onClick={onClose}>
+              {isAdmin ? 'Cancel' : 'Close'}
             </button>
+            {isAdmin && (
+              <button type="submit" className="btn btn-primary">
+                {mode === 'create' ? 'Create' : 'Save'}
+              </button>
+            )}
           </div>
         </form>
       </div>
@@ -1163,10 +1256,11 @@ function ScheduleModal({
 
 // ===== TEACHERS PAGE =====
 function TeachersPage({
-  teachers, schedules, onEdit, onDelete, onAdd,
+  teachers, schedules, isAdmin, onEdit, onDelete, onAdd,
 }: {
   teachers: Teacher[];
   schedules: Schedule[];
+  isAdmin: boolean;
   onEdit: (t: Teacher) => void;
   onDelete: (id: string) => void;
   onAdd: () => void;
@@ -1175,7 +1269,7 @@ function TeachersPage({
     <div className="page-container">
       <div className="page-header">
         <h1 className="page-title">Teachers</h1>
-        <button className="btn btn-primary" onClick={onAdd}>+ Add Teacher</button>
+        {isAdmin && <button className="btn btn-primary" onClick={onAdd}>+ Add Teacher</button>}
       </div>
       <div className="card-grid">
         {teachers.map(teacher => (
@@ -1185,13 +1279,15 @@ function TeachersPage({
                 <div className="sidebar-dot" style={{ backgroundColor: teacher.color, width: 14, height: 14 }}></div>
                 {teacher.name}
               </div>
-              <div className="card-actions">
-                <button className="card-action-btn" onClick={() => onEdit(teacher)}>✎</button>
-                <button className="card-action-btn delete" onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(teacher.id);
-                }}>🗑</button>
-              </div>
+              {isAdmin && (
+                <div className="card-actions">
+                  <button className="card-action-btn" onClick={() => onEdit(teacher)}>✎</button>
+                  <button className="card-action-btn delete" onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(teacher.id);
+                  }}>🗑</button>
+                </div>
+              )}
             </div>
             <div className="card-meta">{teacher.email}</div>
             <div className="card-meta" style={{ marginTop: 8, color: '#818cf8', fontWeight: 500 }}>
@@ -1285,10 +1381,11 @@ function TeacherModal({
 
 // ===== SUBJECTS PAGE =====
 function SubjectsPage({
-  subjects, schedules, onEdit, onDelete, onAdd,
+  subjects, schedules, isAdmin, onEdit, onDelete, onAdd,
 }: {
   subjects: Subject[];
   schedules: Schedule[];
+  isAdmin: boolean;
   onEdit: (s: Subject) => void;
   onDelete: (id: string) => void;
   onAdd: () => void;
@@ -1319,7 +1416,7 @@ function SubjectsPage({
     <div className="page-container">
       <div className="page-header">
         <h1 className="page-title">Subjects</h1>
-        <button className="btn btn-primary" onClick={onAdd}>+ Add Subject</button>
+        {isAdmin && <button className="btn btn-primary" onClick={onAdd}>+ Add Subject</button>}
       </div>
 
       {types.map(type => (
@@ -1338,13 +1435,15 @@ function SubjectsPage({
                     <div className="sidebar-dot" style={{ backgroundColor: subject.color, width: 14, height: 14 }}></div>
                     {subject.name}
                   </div>
-                  <div className="card-actions">
-                    <button className="card-action-btn" onClick={() => onEdit(subject)}>✎</button>
-                    <button className="card-action-btn delete" onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(subject.id);
-                    }}>🗑</button>
-                  </div>
+                  {isAdmin && (
+                    <div className="card-actions">
+                      <button className="card-action-btn" onClick={() => onEdit(subject)}>✎</button>
+                      <button className="card-action-btn delete" onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(subject.id);
+                      }}>🗑</button>
+                    </div>
+                  )}
                 </div>
                 <div className="card-meta" style={{ marginTop: 8, color: '#818cf8', fontWeight: 500 }}>
                   📚 {getSubjectClassCount(subject.id)} scheduled classes
@@ -1480,7 +1579,7 @@ function SubjectModal({
 }
 
 // ===== STUDENTS PAGE =====
-function StudentsPage({ students, schedules, onAdd, onDelete }: { students: Student[], schedules: Schedule[], onAdd: (name: string) => void, onDelete: (id: string) => void }) {
+function StudentsPage({ students, schedules, isAdmin, onAdd, onDelete }: { students: Student[], schedules: Schedule[], isAdmin: boolean, onAdd: (name: string) => void, onDelete: (id: string) => void }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newName, setNewName] = useState('');
 
@@ -1499,7 +1598,7 @@ function StudentsPage({ students, schedules, onAdd, onDelete }: { students: Stud
     <div className="page-container">
       <div className="page-header">
         <h1 className="page-title">Students</h1>
-        <button className="btn btn-primary" onClick={() => setIsModalOpen(true)}>+ Add Student</button>
+        {isAdmin && <button className="btn btn-primary" onClick={() => setIsModalOpen(true)}>+ Add Student</button>}
       </div>
       <div className="card-grid">
         {students.map(s => (
@@ -1514,9 +1613,11 @@ function StudentsPage({ students, schedules, onAdd, onDelete }: { students: Stud
                 }}>👤</div>
                 {s.name}
               </div>
-              <button className="card-action-btn delete" onClick={() => {
-                onDelete(s.id);
-              }}>🗑</button>
+              {isAdmin && (
+                <button className="card-action-btn delete" onClick={() => {
+                  onDelete(s.id);
+                }}>🗑</button>
+              )}
             </div>
             <div className="card-meta" style={{ marginTop: 8, color: '#818cf8', fontWeight: 500 }}>
               📚 Assigned to {getStudentClassCount(s.id)} classes

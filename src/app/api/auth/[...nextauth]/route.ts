@@ -43,6 +43,40 @@ export const authOptions: NextAuthOptions = {
     session: {
         strategy: "jwt",
     },
+    callbacks: {
+        async jwt({ token, user, trigger, session }) {
+            if (trigger === "update" && session?.name) {
+                token.name = session.name;
+            }
+
+            if (user) {
+                token.id = user.id;
+                token.role = (user as any).role;
+            } else if (token.id && !token.role) {
+                // If user is already logged in but token doesn't have role yet,
+                // fetch it from database to avoid forcing a logout.
+                try {
+                    const dbUser = await prisma.user.findUnique({
+                        where: { id: token.id as string },
+                        select: { role: true }
+                    });
+                    if (dbUser) {
+                        token.role = dbUser.role;
+                    }
+                } catch (error) {
+                    console.error("Error fetching user role in JWT callback:", error);
+                }
+            }
+            return token;
+        },
+        async session({ session, token }) {
+            if (session.user && token.id) {
+                (session.user as any).id = token.id as string;
+                (session.user as any).role = token.role as string;
+            }
+            return session;
+        }
+    },
     secret: process.env.NEXTAUTH_SECRET,
     pages: {
         signIn: "/login",

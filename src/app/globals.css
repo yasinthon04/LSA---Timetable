@@ -1272,51 +1272,76 @@ body {
   display: flex;
   position: sticky;
   top: 0;
-  z-index: 20;
+  z-index: 50;
+  /* Header row stays above body rows */
   background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-primary);
-  min-width: fit-content;
+  border-bottom: 2px solid var(--border-primary);
+  width: 100%;
 }
 
 .header-cell {
-  padding: 12px 8px;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   border-right: 1px solid var(--border-primary);
   background: var(--bg-tertiary);
+  /* Removed padding here to prevent width shift */
 }
 
 .col-day {
   width: 60px;
-  flex-shrink: 0;
+  min-width: 60px;
+  max-width: 60px;
+  flex: 0 0 60px;
   position: sticky;
   left: 0;
   z-index: 30;
+  /* Above row content */
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Header sticky cols need higher z-index than body row sticky cols */
+.matrix-header-row .col-day,
+.matrix-header-row .col-teacher {
+  z-index: 60;
+  background: var(--bg-tertiary) !important;
 }
 
 .col-teacher {
   width: 180px;
-  flex-shrink: 0;
+  min-width: 180px;
+  max-width: 180px;
+  flex: 0 0 180px;
   position: sticky;
   left: 60px;
   z-index: 30;
+  /* Above row content */
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-primary);
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  font-size: 13px;
 }
 
 /* Unified Column Styles */
 .col-period,
 .period-cell {
-  flex: 1;
-  /* Grow to fill space equitably */
-  min-width: 85px;
-  /* Minimum width to fit "00:00 - 00:00" comfortably */
+  flex: 1 1 0px;
+  width: 0;
+  min-width: 0;
   border-right: 1px solid var(--border-primary);
   position: relative;
   overflow: hidden;
-  /* Prevent spillover */
+  /* CRITICAL: Prevent content from expanding column */
 }
 
 /* Ensure flex display for cells to center content */
@@ -1333,19 +1358,19 @@ body {
   transition: all 0.2s;
 }
 
-/* Break Columns - Fixed Narrow Width */
+/* Break Columns - Removed fixed width to allow proportional flex-grow */
 .col-period.is-break,
-.period-cell.break {
-  flex: 0 0 50px;
-  min-width: 50px;
-  max-width: 50px;
+.period-cell.is-break {
+  background: repeating-linear-gradient(45deg,
+      transparent,
+      transparent 5px,
+      rgba(255, 255, 255, 0.03) 5px,
+      rgba(255, 255, 255, 0.03) 10px);
 }
 
-/* Treat HR like a normal subject column so it's equal width */
+/* Treat HR like a normal subject column */
 .col-period.is-hr,
 .period-cell.is-hr {
-  flex: 1;
-  min-width: 85px;
   background: rgba(255, 255, 255, 0.02);
 }
 
@@ -1399,7 +1424,7 @@ body {
   justify-content: center;
   background: var(--bg-tertiary);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 11px;
   color: var(--text-primary);
 }
 
@@ -1408,28 +1433,10 @@ body {
   display: flex;
   border-bottom: 2px solid var(--border-primary);
   width: 100%;
-  /* Ensure full width */
   position: relative;
 }
 
-.day-label-col {
-  width: 60px;
-  flex-shrink: 0;
-  position: sticky;
-  left: 0;
-  z-index: 20;
-  /* Higher z-index to stay above scrolled content */
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Remove height auto so it stretches with the content or has min-height */
-  min-height: 60px;
-  /* Match at least one teacher row */
-  align-self: stretch;
-  /* Stretch to fill day group height */
-}
+/* Day Label Column functionality moved to .col-day */
 
 .day-name-vertical {
   writing-mode: vertical-rl;
@@ -1461,21 +1468,7 @@ body {
   background: rgba(255, 255, 255, 0.02);
 }
 
-.teacher-name-cell {
-  width: 180px;
-  flex-shrink: 0;
-  position: sticky;
-  left: 60px;
-  z-index: 10;
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border-primary);
-  display: flex;
-  align-items: center;
-  padding: 8px 16px;
-  gap: 8px;
-  font-weight: 500;
-  font-size: 13px;
-}
+/* Teacher name cell functionality moved to .col-teacher */
 
 .period-cell:hover {
   background: rgba(255, 255, 255, 0.05);
