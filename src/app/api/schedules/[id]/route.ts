@@ -16,18 +16,16 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         const schedule = await prisma.schedule.update({
             where: { id },
             data: {
-                ...(teacherId && { teacherId }),
-                ...(subjectId && { subjectId }),
-                ...(yearGroupId && { yearGroupId }),
-                ...(dayOfWeek !== undefined && { dayOfWeek }),
-                ...(startTime && { startTime }),
-                ...(endTime && { endTime }),
-                ...(studentIds && {
-                    studentSchedules: {
-                        deleteMany: {},
-                        create: studentIds.map((sid: string) => ({ studentId: sid }))
-                    }
-                })
+                teacherId: teacherId || undefined,
+                subjectId: subjectId || undefined,
+                yearGroupId: yearGroupId || null,
+                dayOfWeek: dayOfWeek !== undefined ? dayOfWeek : undefined,
+                startTime: startTime || undefined,
+                endTime: endTime || undefined,
+                studentSchedules: studentIds ? {
+                    deleteMany: {},
+                    create: studentIds.map((sid: string) => ({ studentId: sid }))
+                } : undefined
             },
             include: {
                 teacher: true,
@@ -39,8 +37,9 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
             },
         });
         return NextResponse.json(schedule);
-    } catch (error) {
-        return NextResponse.json({ error: 'Failed to update schedule' }, { status: 500 });
+    } catch (error: any) {
+        console.error('Schedule update error:', error);
+        return NextResponse.json({ error: 'Failed to update schedule', details: error.message }, { status: 500 });
     }
 }
 

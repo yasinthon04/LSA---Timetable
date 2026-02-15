@@ -101,6 +101,7 @@ export default function Home() {
   }>({ open: false, title: '', message: '', onConfirm: () => { } });
 
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const confirmDelete = (title: string, message: string, onConfirm: () => void) => {
     setConfirmationModal({ open: true, title, message, onConfirm });
@@ -163,6 +164,28 @@ export default function Home() {
   // We filter inside the render to show all but dim unselected
   const allSchedules = useMemo(() => schedules, [schedules]);
 
+  const groupedSubjectsByType = useMemo(() => {
+    const groups: Record<string, Subject[]> = {};
+    subjects.forEach(s => {
+      const t = s.type || 'MAIN';
+      if (!groups[t]) groups[t] = [];
+      groups[t].push(s);
+    });
+    return groups;
+  }, [subjects]);
+
+  const subjectTypesList = useMemo(() => {
+    const order = ['MAIN', 'INTERVENTION', 'BOOSTER'];
+    return Object.keys(groupedSubjectsByType).sort((a, b) => {
+      const ia = order.indexOf(a);
+      const ib = order.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [groupedSubjectsByType]);
+
 
   // Schedule CRUD
   const handleSaveSchedule = async (data: ScheduleFormData, id?: string) => {
@@ -174,12 +197,19 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error();
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        throw new Error(result.details || result.error || 'Unknown error');
+      }
+
       await fetchSchedules();
       setModalState({ open: false, mode: 'create' });
       showToast(id ? 'Schedule updated' : 'Schedule created');
-    } catch {
-      showToast('Failed to save schedule', 'error');
+    } catch (err: any) {
+      console.error('Save error:', err);
+      showToast(`Failed to save: ${err.message}`, 'error');
     }
   };
 
@@ -209,20 +239,62 @@ export default function Home() {
       return;
     }
 
-    // Check if target slot is occupied
-    const targetSchedule = schedules.find(s =>
+    const pStartMin = timeToMinutes(period.start);
+    const pEndMin = timeToMinutes(period.end);
+
+    // Find all overlapping schedules for this teacher/day (across ALL year groups)
+    const overlaps = schedules.filter(s =>
       s.teacherId === targetTeacherId &&
       s.dayOfWeek === targetDay &&
-      (!selectedYearGroup || s.yearGroupId === selectedYearGroup) &&
       isScheduleInPeriod(s, period.start, period.end)
-    );
+    ).sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+
+    // Calculate the first available gap in this period
+    let finalStart = pStartMin;
+    let finalEnd = pEndMin;
+    let targetScheduleIdToDelete = null;
+    let isFull = false;
+
+    if (overlaps.length > 0) {
+      let currentPos = pStartMin;
+      let gapFound = false;
+
+      for (const s of overlaps) {
+        const sStart = timeToMinutes(s.startTime);
+        const sEnd = timeToMinutes(s.endTime);
+
+        if (sStart > currentPos) {
+          finalStart = currentPos;
+          finalEnd = sStart;
+          gapFound = true;
+          break;
+        }
+        currentPos = Math.max(currentPos, sEnd);
+      }
+
+      if (!gapFound && currentPos < pEndMin) {
+        finalStart = currentPos;
+        finalEnd = pEndMin;
+        gapFound = true;
+      }
+
+      if (!gapFound) {
+        isFull = true;
+        // Find if we should replace something (usually the first overlap or one in same year group)
+        const sameYearOverlap = overlaps.find(s => s.yearGroupId === targetYearGroupId);
+        targetScheduleIdToDelete = (sameYearOverlap || overlaps[0]).id;
+      }
+    }
 
     try {
       if (type === 'create') {
         const subjectId = data.subjectId;
-        // Logic: If occupied, Replace (Delete old, Create new). If empty, Create new.
-        if (targetSchedule) {
-          await fetch(`/api/schedules/${targetSchedule.id}`, { method: 'DELETE' });
+
+        if (isFull && targetScheduleIdToDelete) {
+          await fetch(`/api/schedules/${targetScheduleIdToDelete}`, { method: 'DELETE' });
+          // If replacing, use full period
+          finalStart = pStartMin;
+          finalEnd = pEndMin;
         }
 
         await handleSaveSchedule({
@@ -230,8 +302,8 @@ export default function Home() {
           subjectId,
           yearGroupId: targetYearGroupId,
           dayOfWeek: targetDay,
-          startTime: period.start,
-          endTime: period.end
+          startTime: minutesToTime(finalStart),
+          endTime: minutesToTime(finalEnd)
         });
 
       } else if (type === 'move') {
@@ -240,11 +312,13 @@ export default function Home() {
         if (!sourceSchedule) return;
 
         // Verify we aren't dropping on self
-        if (targetSchedule && targetSchedule.id === sourceSchedule.id) return;
+        if (isFull && targetScheduleIdToDelete === sourceSchedule.id) return;
 
-        if (targetSchedule) {
+        if (isFull && targetScheduleIdToDelete) {
+          const targetSchedule = overlaps.find(o => o.id === targetScheduleIdToDelete);
+          if (!targetSchedule) return;
+
           // SWAP Logic
-          // Store Source Coords
           const sourceCoords = {
             teacherId: sourceSchedule.teacherId,
             dayOfWeek: sourceSchedule.dayOfWeek,
@@ -252,18 +326,16 @@ export default function Home() {
             endTime: sourceSchedule.endTime
           };
 
-          // Update Source to Target Coords
           await handleSaveSchedule({
             ...sourceSchedule,
             teacherId: targetTeacherId,
             dayOfWeek: targetDay,
-            startTime: period.start,
-            endTime: period.end,
+            startTime: targetSchedule.startTime,
+            endTime: targetSchedule.endTime,
             subjectId: sourceSchedule.subjectId,
             yearGroupId: sourceSchedule.yearGroupId
           }, sourceSchedule.id);
 
-          // Update Target to Source Coords
           await handleSaveSchedule({
             ...targetSchedule,
             ...sourceCoords,
@@ -274,13 +346,13 @@ export default function Home() {
           showToast('Schedules switched');
 
         } else {
-          // MOVE Logic (Target Empty)
+          // MOVE Logic (Fill Gap or Empty)
           await handleSaveSchedule({
             ...sourceSchedule,
             teacherId: targetTeacherId,
             dayOfWeek: targetDay,
-            startTime: period.start,
-            endTime: period.end,
+            startTime: minutesToTime(finalStart),
+            endTime: minutesToTime(finalEnd),
             subjectId: sourceSchedule.subjectId,
             yearGroupId: sourceSchedule.yearGroupId
           }, sourceSchedule.id);
@@ -419,8 +491,9 @@ export default function Home() {
 
   return (
     <div className="app-layout">
+      {mobileMenuOpen && <div className="mobile-overlay" onClick={() => setMobileMenuOpen(false)}></div>}
       {/* SIDEBAR */}
-      <aside className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
+      <aside className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''} ${mobileMenuOpen ? 'mobile-open' : ''}`}>
         <div className="sidebar-header">
           <div className="sidebar-logo">ST</div>
           {!isSidebarCollapsed && <span className="sidebar-title">Timetable</span>}
@@ -455,60 +528,53 @@ export default function Home() {
                 onChange={(e) => setSubjectFilter(e.target.value)}
               />
             )}
-            {subjects
-              .filter(s => s.name.toLowerCase().includes(subjectFilter.toLowerCase()))
-              .filter(s => s.type === 'MAIN').map(subject => (
-                <div
-                  key={subject.id}
-                  className={`sidebar-item ${selectedSubjectIds.has(subject.id) ? 'active' : ''}`}
-                  draggable={isAdmin}
-                  onDragStart={(e) => isAdmin && handleDragStart(e, 'create', { subjectId: subject.id })}
-                  onClick={() => {
-                    setSelectedSubjectIds(prev => {
-                      const next = new Set(prev);
-                      if (next.has(subject.id)) next.delete(subject.id); else next.add(subject.id);
-                      return next;
-                    });
-                  }}
-                  style={{
-                    cursor: 'pointer',
-                    opacity: selectedSubjectIds.size > 0 && !selectedSubjectIds.has(subject.id) ? 0.5 : 1,
-                    border: selectedSubjectIds.has(subject.id) ? `1px solid ${subject.color}` : '1px solid transparent',
-                    justifyContent: isSidebarCollapsed ? 'center' : 'flex-start'
-                  }}
-                  title={subject.name}
-                >
-                  <div className="sidebar-dot" style={{ backgroundColor: subject.color }}></div>
-                  {!isSidebarCollapsed && <span className="sidebar-item-text">{subject.name}</span>}
+
+            <div className="sidebar-subjects-list" style={{ overflowY: 'auto', flex: 1 }}>
+              {subjectTypesList.map(type => (
+                <div key={type} className="sidebar-group" style={{ marginBottom: 16 }}>
+                  {!isSidebarCollapsed && (
+                    <div className="sidebar-group-title" style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center' }}>
+                      <span className={`badge badge-${type.toLowerCase()}`} style={{ fontSize: 9 }}>{type}</span>
+                    </div>
+                  )}
+                  {groupedSubjectsByType[type]
+                    .filter(s => s.name.toLowerCase().includes(subjectFilter.toLowerCase()))
+                    .map(subject => (
+                      <div
+                        key={subject.id}
+                        className={`sidebar-item ${selectedSubjectIds.has(subject.id) ? 'active' : ''}`}
+                        draggable={isAdmin}
+                        onDragStart={(e) => isAdmin && handleDragStart(e, 'create', { subjectId: subject.id })}
+                        onClick={() => {
+                          setSelectedSubjectIds(prev => {
+                            const next = new Set(prev);
+                            if (next.has(subject.id)) next.delete(subject.id); else next.add(subject.id);
+                            return next;
+                          });
+                        }}
+                        style={{
+                          cursor: 'pointer',
+                          opacity: selectedSubjectIds.size > 0 && !selectedSubjectIds.has(subject.id) ? 0.5 : 1,
+                          border: selectedSubjectIds.has(subject.id) ? `1px solid ${subject.color}` : '1px solid transparent',
+                          justifyContent: isSidebarCollapsed ? 'center' : 'flex-start',
+                          marginBottom: 4,
+                          padding: '6px 8px',
+                          borderRadius: '6px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          fontSize: 12,
+                          transition: 'all 0.2s'
+                        }}
+                        title={subject.name}
+                      >
+                        <div className="sidebar-dot" style={{ backgroundColor: subject.color, width: 8, height: 8, borderRadius: '50%' }}></div>
+                        {!isSidebarCollapsed && <span className="sidebar-item-text" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subject.name}</span>}
+                      </div>
+                    ))}
                 </div>
               ))}
-            {subjects
-              .filter(s => s.name.toLowerCase().includes(subjectFilter.toLowerCase()))
-              .filter(s => s.type !== 'MAIN').map(subject => (
-                <div
-                  key={subject.id}
-                  className={`sidebar-item ${selectedSubjectIds.has(subject.id) ? 'active' : ''}`}
-                  draggable={isAdmin}
-                  onDragStart={(e) => isAdmin && handleDragStart(e, 'create', { subjectId: subject.id })}
-                  onClick={() => {
-                    setSelectedSubjectIds(prev => {
-                      const next = new Set(prev);
-                      if (next.has(subject.id)) next.delete(subject.id); else next.add(subject.id);
-                      return next;
-                    });
-                  }}
-                  style={{
-                    cursor: 'pointer',
-                    opacity: selectedSubjectIds.size > 0 && !selectedSubjectIds.has(subject.id) ? 0.5 : 1,
-                    border: selectedSubjectIds.has(subject.id) ? `1px solid ${subject.color}` : '1px solid transparent',
-                    justifyContent: isSidebarCollapsed ? 'center' : 'flex-start'
-                  }}
-                  title={subject.name}
-                >
-                  <div className="sidebar-dot" style={{ backgroundColor: subject.color, border: '2px dashed rgba(255,255,255,0.3)' }}></div>
-                  {!isSidebarCollapsed && <span className="sidebar-item-text">{subject.name}</span>}
-                </div>
-              ))}
+            </div>
           </div>
 
           <div style={{ borderTop: '1px solid var(--border-primary)', margin: '8px 16px' }}></div>
@@ -568,6 +634,13 @@ export default function Home() {
       <div className="main-content">
         {/* TOP NAV */}
         <nav className="topnav">
+          <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(true)}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
           <div className="topnav-links">
             <a className={`topnav-link ${activePage === 'calendar' ? 'active' : ''}`} onClick={() => setActivePage('calendar')}>Timetable</a>
             <a className={`topnav-link ${activePage === 'teachers' ? 'active' : ''}`} onClick={() => setActivePage('teachers')}>Teachers</a>
@@ -652,7 +725,7 @@ export default function Home() {
                   value={selectedYearGroup}
                   onChange={(e) => setSelectedYearGroup(e.target.value)}
                 >
-                  <option value="">All Years</option>
+                  <option value="">All</option>
                   {yearGroups.map(yg => (
                     <option key={yg.id} value={yg.id}>{yg.name}</option>
                   ))}
@@ -728,7 +801,7 @@ export default function Home() {
                     const hasMatchingSchedule = allSchedules.some(s =>
                       s.teacherId === t.id &&
                       s.dayOfWeek === dayIdx &&
-                      (!selectedYearGroup || s.yearGroupId === selectedYearGroup) &&
+                      (!selectedYearGroup || s.yearGroupId === selectedYearGroup || !s.yearGroupId) &&
                       selectedSubjectIds.has(s.subjectId)
                     );
                     return hasMatchingSchedule;
@@ -752,7 +825,7 @@ export default function Home() {
                         const rowSchedules = allSchedules.filter(s =>
                           s.teacherId === teacher.id &&
                           s.dayOfWeek === dayIdx &&
-                          (!selectedYearGroup || s.yearGroupId === selectedYearGroup) &&
+                          (!selectedYearGroup || s.yearGroupId === selectedYearGroup || !s.yearGroupId) &&
                           (selectedSubjectIds.size === 0 || selectedSubjectIds.has(s.subjectId))
                         );
 
@@ -771,36 +844,6 @@ export default function Home() {
                               const periodDuration = periodEnd - periodStart;
 
                               const periodScheds = rowSchedules.filter(s => isScheduleInPeriod(s, period.start, period.end));
-                              const isBusy = periodScheds.length > 0;
-                              const sched = periodScheds[0];
-
-                              // Calculate card style if busy
-                              let cardStyle: React.CSSProperties = {};
-                              if (isBusy && sched) {
-                                const schedStart = timeToMinutes(sched.startTime);
-                                const schedEnd = timeToMinutes(sched.endTime);
-                                const effStart = Math.max(schedStart, periodStart);
-                                const effEnd = Math.min(schedEnd, periodEnd); // Clamp to period
-
-                                const schedDuration = effEnd - effStart;
-                                const offset = effStart - periodStart;
-
-                                const widthPercent = (schedDuration / periodDuration) * 100;
-                                const leftPercent = (offset / periodDuration) * 100;
-
-                                cardStyle = {
-                                  position: 'absolute',
-                                  left: `${leftPercent}%`,
-                                  width: `${widthPercent}%`,
-                                  height: '100%',
-                                  top: 0,
-                                  backgroundColor: sched.subject?.color,
-                                  zIndex: 5,
-                                  borderRadius: 4,
-                                  overflow: 'hidden',
-                                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-                                };
-                              }
 
                               return (
                                 <div
@@ -831,35 +874,124 @@ export default function Home() {
                                     });
                                   }}
                                 >
-                                  {isBusy && sched && (
-                                    <div
-                                      className="cell-content"
-                                      style={cardStyle}
-                                      draggable={isAdmin}
-                                      onDragStart={(e) => {
-                                        if (!isAdmin) return;
-                                        e.stopPropagation();
-                                        handleDragStart(e, 'move', { scheduleId: sched.id });
-                                      }}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setModalState({ open: true, mode: isAdmin ? 'edit' : 'read', schedule: sched });
-                                      }}
-                                    >
-                                      <div className="cell-subject">{sched.subject?.name}</div>
-                                      <div className="cell-time">{yearGroups.find(y => y.id === sched.yearGroupId)?.name || sched.yearGroupId}</div>
-                                      {sched.studentSchedules && sched.studentSchedules.length > 0 && (
-                                        <div className="cell-students">
-                                          {sched.studentSchedules.slice(0, 3).map(ss => (
-                                            <span key={ss.id} className="student-tag">{ss.student?.name}</span>
-                                          ))}
-                                          {sched.studentSchedules.length > 3 && (
-                                            <span className="student-tag-more">+{sched.studentSchedules.length - 3}</span>
+                                  {periodScheds.map(sched => {
+                                    const schedStart = timeToMinutes(sched.startTime);
+                                    const schedEnd = timeToMinutes(sched.endTime);
+                                    const effStart = Math.max(schedStart, periodStart);
+                                    const effEnd = Math.min(schedEnd, periodEnd);
+                                    const schedDuration = effEnd - effStart;
+                                    const offset = effStart - periodStart;
+
+                                    const widthPercent = (schedDuration / periodDuration) * 100;
+                                    const leftPercent = (offset / periodDuration) * 100;
+
+                                    const cardStyle: React.CSSProperties = {
+                                      position: 'absolute',
+                                      left: `${leftPercent}%`,
+                                      width: `${widthPercent}%`,
+                                      height: 'calc(100% - 4px)',
+                                      top: '2px',
+                                      backgroundColor: sched.subject?.color,
+                                      zIndex: 10,
+                                      borderRadius: 4,
+                                      /* overflow: 'hidden', Removed to allow tooltip to pop out */
+                                      boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                                      padding: '4px',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: '2px',
+                                      border: '1px solid rgba(255,255,255,0.1)'
+                                    };
+
+                                    return (
+                                      <div
+                                        key={sched.id}
+                                        className="cell-content"
+                                        style={cardStyle}
+                                        draggable={isAdmin}
+                                        onDragStart={(e) => {
+                                          if (!isAdmin) return;
+                                          e.stopPropagation();
+                                          handleDragStart(e, 'move', { scheduleId: sched.id });
+                                        }}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setModalState({ open: true, mode: isAdmin ? 'edit' : 'read', schedule: sched });
+                                        }}
+                                      >
+                                        {/* TOOLTIP ON HOVER */}
+                                        <div className="cell-tooltip">
+                                          <div className="tooltip-title">
+                                            <div className="sidebar-dot" style={{ backgroundColor: sched.subject?.color }}></div>
+                                            {sched.subject?.name}
+                                          </div>
+                                          <div className="tooltip-info">
+                                            <div className="tooltip-label">Time</div>
+                                            <div className="tooltip-value">{sched.startTime} - {sched.endTime}</div>
+
+                                            <div className="tooltip-label">Year</div>
+                                            <div className="tooltip-value">{yearGroups.find(y => y.id === sched.yearGroupId)?.name || 'All'}</div>
+
+                                            <div className="tooltip-label">Teacher</div>
+                                            <div className="tooltip-value">{sched.teacher?.name}</div>
+                                          </div>
+
+                                          {sched.studentSchedules && sched.studentSchedules.length > 0 && (
+                                            <div className="tooltip-students-section">
+                                              <div className="tooltip-label">Students ({sched.studentSchedules.length})</div>
+                                              <div className="tooltip-students-list">
+                                                {sched.studentSchedules.map(ss => (
+                                                  <span key={ss.id} className="tooltip-student-item">{ss.student?.name}</span>
+                                                ))}
+                                              </div>
+                                            </div>
                                           )}
                                         </div>
-                                      )}
-                                    </div>
-                                  )}
+
+                                        <div className="cell-subject" style={{ fontSize: '10px', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                          {sched.subject?.name}
+                                        </div>
+                                        <div className="cell-time" style={{ fontSize: '9px', opacity: 0.9 }}>
+                                          {yearGroups.find(y => y.id === sched.yearGroupId)?.name || 'All'}
+                                        </div>
+                                        {sched.studentSchedules && sched.studentSchedules.length > 0 && widthPercent > 10 && (
+                                          <div className="cell-students" style={{
+                                            marginTop: 'auto',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '2px',
+                                            overflow: 'hidden',
+                                            width: '100%'
+                                          }}>
+                                            {sched.studentSchedules.slice(0, 3).map((ss) => (
+                                              <span
+                                                key={ss.id}
+                                                style={{
+                                                  fontSize: '7.5px',
+                                                  background: 'rgba(0,0,0,0.25)',
+                                                  padding: '1px 3px',
+                                                  borderRadius: '2px',
+                                                  whiteSpace: 'nowrap',
+                                                  overflow: 'hidden',
+                                                  textOverflow: 'ellipsis',
+                                                  maxWidth: (sched.studentSchedules?.length || 0) > 1 ? '40%' : '100%',
+                                                  flexShrink: 1
+                                                }}
+                                                title={ss.student?.name}
+                                              >
+                                                {ss.student?.name}
+                                              </span>
+                                            ))}
+                                            {(sched.studentSchedules?.length || 0) > 3 && (
+                                              <span style={{ fontSize: '7.5px', fontWeight: 'bold', flexShrink: 0 }}>
+                                                +{(sched.studentSchedules?.length || 0) - 3}
+                                              </span>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               );
                             })}
@@ -1025,7 +1157,7 @@ function ScheduleModal({
   const [formData, setFormData] = useState<ScheduleFormData>({
     teacherId: schedule?.teacherId || prefill?.teacherId || teachers[0]?.id || '',
     subjectId: schedule?.subjectId || prefill?.subjectId || subjects[0]?.id || '',
-    yearGroupId: schedule?.yearGroupId || prefill?.yearGroupId || yearGroups[0]?.id || '',
+    yearGroupId: schedule?.yearGroupId || prefill?.yearGroupId || '',
     dayOfWeek: schedule?.dayOfWeek ?? prefill?.dayOfWeek ?? 0,
     startTime: schedule?.startTime || prefill?.startTime || '07:30',
     endTime: schedule?.endTime || prefill?.endTime || '08:30',
@@ -1084,9 +1216,10 @@ function ScheduleModal({
             <select
               className="form-select"
               disabled={!isAdmin}
-              value={formData.yearGroupId}
+              value={formData.yearGroupId || ''}
               onChange={e => setFormData({ ...formData, yearGroupId: e.target.value })}
             >
+              <option value="">All</option>
               {yearGroups.map(yg => (
                 <option key={yg.id} value={yg.id}>{yg.name}</option>
               ))}
@@ -1423,7 +1556,7 @@ function SubjectsPage({
         <div key={type} style={{ marginBottom: 32 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className={`badge badge-${type.toLowerCase()}`} style={{ textTransform: 'uppercase' }}>{type}</span>
-            <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+            <span style={{ color: 'var(--text-muted)', fontSize: 11, fontWeight: 500, marginLeft: 4 }}>
               ({groupedSubjects[type].length} subjects)
             </span>
           </h2>

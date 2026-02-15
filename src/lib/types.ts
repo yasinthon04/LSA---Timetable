@@ -49,7 +49,7 @@ export interface Schedule {
     id: string;
     teacherId: string;
     subjectId: string;
-    yearGroupId: string;
+    yearGroupId: string | null;
     dayOfWeek: number;
     startTime: string;
     endTime: string;
@@ -63,7 +63,7 @@ export interface Schedule {
 export interface ScheduleFormData {
     teacherId: string;
     subjectId: string;
-    yearGroupId: string;
+    yearGroupId: string | null;
     dayOfWeek: number;
     startTime: string;
     endTime: string;

@@ -30,8 +30,9 @@ export async function GET(request: NextRequest) {
             orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
         });
         return NextResponse.json(schedules);
-    } catch (error) {
-        return NextResponse.json({ error: 'Failed to fetch schedules' }, { status: 500 });
+    } catch (error: any) {
+        console.error('Failed to fetch schedules:', error);
+        return NextResponse.json({ error: 'Failed to fetch schedules', details: error.message }, { status: 500 });
     }
 }
 
@@ -45,13 +46,18 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const { teacherId, subjectId, yearGroupId, dayOfWeek, startTime, endTime, studentIds } = body;
 
-        if (!teacherId || !subjectId || !yearGroupId || dayOfWeek === undefined || !startTime || !endTime) {
+        if (!teacherId || !subjectId || dayOfWeek === undefined || !startTime || !endTime) {
             return NextResponse.json({ error: 'All fields are required' }, { status: 400 });
         }
 
         const schedule = await prisma.schedule.create({
             data: {
-                teacherId, subjectId, yearGroupId, dayOfWeek, startTime, endTime,
+                teacherId,
+                subjectId,
+                yearGroupId: yearGroupId || null,
+                dayOfWeek,
+                startTime,
+                endTime,
                 studentSchedules: studentIds && studentIds.length > 0 ? {
                     create: studentIds.map((sid: string) => ({ studentId: sid }))
                 } : undefined
@@ -66,7 +72,8 @@ export async function POST(request: NextRequest) {
             },
         });
         return NextResponse.json(schedule, { status: 201 });
-    } catch (error) {
-        return NextResponse.json({ error: 'Failed to create schedule' }, { status: 500 });
+    } catch (error: any) {
+        console.error('Schedule creation error:', error);
+        return NextResponse.json({ error: 'Failed to create schedule', details: error.message }, { status: 500 });
     }
 }
